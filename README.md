@@ -89,7 +89,7 @@ on the same core and share the same L1 and L2 cache.
 
   - Each job is described as an array of N functions. (N=2)
 
-  - For each job, N threads are created and assigned respective
+  - For each job, N threads (that were already created) are assigned respective
     functions.
 
   - For a given job, all threads are guaranteed to be on the same
