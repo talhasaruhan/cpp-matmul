@@ -14,10 +14,11 @@ I didn’t implement the Strassen’s algorithm, but may do so later on.
 
 # How to run
 
-Navigate to *x64\\Release\\* and run this command or call “run.bat”. If
+Note: The code is currently Win32 only (due to the calls to query CPU resources and to set processor affinity). 
+
+Build the solution, then navigate to *x64\\Release\\* and run this command or call “run.bat”. If
 you don’t have “tee” command, just delete the last part or install
-GnuWin32
-CoreUtils.
+GnuWin32 CoreUtils.
 
 ``` bash
 for /l %x in (1, 1, 100) do echo %x && (MatrixGenerator.exe && printf "Generated valid output. Testing...\n" && MatrixMulTester.exe matrixAB.bin MatrixMult.exe matrixA.bin matrixB.bin matrixAB-out.bin && printf \n\n ) | tee -a out.txt
