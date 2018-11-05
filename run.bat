@@ -1,0 +1,1 @@
+cd x64/Release/  && for /l %%x in (1, 1, 100) do echo %%x && (MatrixGenerator.exe && printf "Generated valid output. Testing...\n" && MatrixMulTester.exe matrixAB.bin MatrixMult.exe matrixA.bin matrixB.bin matrixAB-out.bin && printf \n\n ) | tee -a out.txt
