@@ -24,8 +24,7 @@ GnuWin32 CoreUtils.
 for /l %x in (1, 1, 100) do echo %x && (MatrixGenerator.exe && printf "Generated valid output. Testing...\n" && MatrixMulTester.exe matrixAB.bin MatrixMult.exe matrixA.bin matrixB.bin matrixAB-out.bin && printf \n\n ) | tee -a out.txt
 ```
 
-*(Note that I’ve changed the default valid output generator to
-transposed B method, since default naïve method took too long for big
+*(Note the default valid output generator is transposed B method, since naïve method takes too long for big
 matrices.)*
 
 # A benchmark for large matrices
