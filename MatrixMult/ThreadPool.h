@@ -15,36 +15,80 @@
 /*
 * Thread pool that respects cache locality on HyperThreaded CPUs (WIN32 API dependent)
 *
-* Each job is described as an array of N functions.
+* Each job is described as an array of N functions. (ideal N=2 for HT)
 * For each job, N threads are created and assigned respective functions.
 * For a given job, all threads are guaranteed to be on the same physical core.
 * No two threads from different jobs are allowed on the same physical core.
 *
+*
+* Why?
+*   When doing multithreading on cache sensitive tasks, 
+*   we want to keep threads that operate on same or 
+*     contiguous memory region on the same physical core.
+*
+*   For matrix multiplication, 
+*   assume that we have a HyperThreading system with K physical and 2K logical processors. 
+*   Each task computes a blocks on the A*B matrix, so memory accesses are exclusive
+*   If we instantiate 2K threads and leave it to the OS to handle them,
+*   In the best case scenerio, each hw core will have a half of its cache available for a block.
+*   And we'll need to access IO more often, possibly freezing the pipeline.
+*
+*   So, instead, we split these blocks into two and have two threads on the same core work on them.
+*   Memory fetches for one thread will directly benefit the other thread as well. 
+*   Very much contrary to the previous loosely threaded scenerio.
+*
+*   Note that we don't account for context switches etc.
+*   Also, there may be more complex CPU trickery I don't account for.
+*   But at the end of the day, I've empirically shown that this works better.
+*
+*
 * Currently this piece of code is not or claim to be:
-*     * As optimized as it can be
-*     * As conformative to modern C++ as it can be
+*   * As optimized as it can be
+*   * As conformative to modern C++ as it can be
+*
+* *********************************************************************************
+* IF YOU ENCOUNTER A BUG, OR SEE AN OPPURTUNITY FOR IMPROVEMENT, PLEASE LET ME KNOW
+* *********************************************************************************
 *
 * Reference: This code is influenced by writeup that explains thread pools at
 * https://github.com/mtrebi/thread-pool/blob/master/README.md
-* However, this is NOT a copy and has drastically different aims and implementation.
 *
 * Structure:
+*   QueryHWCores:
+*     Uses Windows API to detect the number of physical cores 
+*       and mapping between physical and logical processors.
 *
-* Submission:
-*     array of (void function (void)) of length N
+*   HWLocalThreadPool:
+*     Submission:
+*       array of (void function (void)) of length N
 *         where N is the num of threads that will spawn on the same core,
 *         and, the length of the function ptr array. ith thread handles the ith function
-*
-* Core Handlers:
-*     We create NumHWCores many CoreHandler objects.
-*     These objects are responsible for managing their cores.
-*     They check the main pool for jobs, when a job is found,
-*         if N==1   ,   they call the only function in the job description.
-*         if N>1    ,   they spawn N-1 more threads on the same physical core,
-*                       each one is assigned i+1 th function in the arr.
-*                       The CoreHandler is assigned to the first function.
-*     Once CoreHandler finishes its own task, it waits for other threads,
-*     Then its available for new jobs, waiting to be notified by the pool manager.
+*     
+*     Core Handlers:
+*       We create NumHWCores many CoreHandler objects.
+*       These objects are responsible for managing their cores.
+*       They check the main pool for jobs, when a job is found,
+*           if N==1   ,   they call the only function in the job description.
+*           if N>1    ,   they assign N-1 threads on the same physical core to,
+*                         respective functions fucntions in the array.
+*                         The CoreHandler is assigned to the first function.
+*       Once CoreHandler finishes its own task, it waits for other threads,
+*       Then its available for new jobs, waiting to be notified by the pool manager.
+*     
+*     Thread Handlers:
+*       Responsible for handling tasks handed away by the CoreHandler.
+*       When they finish execution, they signal to notify CoreHandler 
+*       Then, they wait for a new task to run until they are terminated.
+* 
+* Notes:
+* 
+*   DON'T KEEP THESE TASKS TOO SMALL. 
+*   We don't want our CoreHandler to check its childrens states constantly,
+*   So, when a thread finishes a task, we signal the CoreHandler.
+*   This might become a overhead if the task itself is trivial.
+*   In that case you probably shouldn't be using this structure anyways,
+*   But if you want to, you can change it so that,
+*   CoreHandler periodically checks m_childThreadOnline array and sleeps in between.
 *
 */
 
