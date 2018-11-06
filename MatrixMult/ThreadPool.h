@@ -176,6 +176,7 @@ namespace QueryHWCores {
 
         map = (ULONG_PTR*)malloc(numHWCores * sizeof(ULONG_PTR));
         memcpy(map, lMap, numHWCores * sizeof(ULONG_PTR));
+        free(lMap);
 
         return 0;
     }
@@ -366,7 +367,7 @@ protected:
         }
 
         void CloseChildThreads() {
-            if (m_numChildThreads < 1)
+            if (m_terminate ||  m_numChildThreads < 1)
                 return;
 
             {
@@ -381,6 +382,10 @@ protected:
                     m_childThreads[i].join();
                 }
             }
+
+            delete[] m_childThreads;
+            delete[] m_childThreadOnline;
+            delete[] m_job;
         }
 
         void operator()() {
