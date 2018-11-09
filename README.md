@@ -26,15 +26,15 @@ GnuWin32 CoreUtils.
 for /l %x in (1, 1, 100) do echo %x && (MatrixGenerator.exe && printf "Generated valid output. Testing...\n" && MatrixMult.exe matrixA.bin matrixB.bin matrixAB-out.bin && printf \n\n ) | tee -a out.txt
 ```
 
-# Benchmarks for large matrices
+# Benchmarks
 
 On my machine (6 core i7-8700K), I’ve compared my implementation against:
 * Multithreaded python-numpy which uses C/C++ backend and Intel MKL BLAS
 library. 
 * Eigen library (with all the compiler optimizations turned on)
 
-All benchmarks are for multiplying two 10,000 X 10,000 matrices.
-Here are the benchmarks in a couple of lines, the full source code for each test can be found under Benchmark folder
+All example setups are for multiplying two 10,000 X 10,000 matrices, more tests with differently sized matrices can be found at [comparison](#comparison) section.
+Here are the benchmarks in a couple of lines, the full source code for tests can be found under Benchmark folder
 
 ### Numpy with C++/MKL backend
 ```
@@ -50,8 +50,12 @@ Setup:
 ```
     MatrixXd matA = MatrixXd::Random(10000, 10000);
     MatrixXd matB = MatrixXd::Random(10000, 10000);
-
-    setNbThreads(12);
+    
+    /* I found that 12 threads to work best (tried 4, 8, 12, 16), 
+    which is expected as any less and cpu resources will be free, 
+    any more and threads will compete with each other for no reason. */
+    
+    setNbThreads(12); 
     
     auto start = std::chrono::high_resolution_clock::now();
     MatrixXd matC = matA * matB;
@@ -89,17 +93,19 @@ Output:
 ```
 
 ### Comparison
-Benchmark | Numpy(MKL)    | Eigen          | This impl. |
+Benchmark | Numpy(MKL)    | Eigen          | This impl. (MTMatMul) |
 | ------------- | ------------- | ------------- | ------------- | 
 (10Kx10K)(10Kx10K) | 8.88s  | 20.33s  | 18.86s  |
+(5Kx5K)(5Kx5K) | 1.01s  | 2.58s  | 2.15s  |
+(1Kx1K)(1Kx1K) | 10.0ms  | 28.7ms  | 20.7ms  |
+
 
 My multithreaded implementation is only 2.1 times slower than a
 professional BLAS package (18.9 seconds vs 8.9 seconds) and is even slightly faster than the Eigen library. If I’d
 implemented Strassen’s algorithm, assuming same constants, the program
 would run (10^4)^(3-2.8) = 6.3 times faster. Obviously
 Strassen’s constant is perceptibly larger, but I think it’s safe to
-assume it would improve the overall performance to a more comparable
-level with numpy.
+assume it would improve the overall performance to a level more comparable with numpy.
 
 # Code details:
 
