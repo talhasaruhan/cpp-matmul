@@ -183,8 +183,9 @@ core, each handling half of the block.
 * 09/11/2018
 * Fixed memory leaks
 
-![no_leaks_f](https://user-images.githubusercontent.com/15991519/48237828-96127300-e3d9-11e8-9596-10e03797fc43.PNG)
-(This is  the heap profile of the program after running C = AB, as can be seen here, all the previously leaked mess is now cleaned up nicely. Note: int[] is the CPU core to logical processor map,)
+![no_leaks_f2](https://user-images.githubusercontent.com/15991519/48242727-a0d70300-e3ed-11e8-80e9-01954f2ec6b9.PNG)
+
+(This is  the heap profile of the program after running C1 = AB, freeing C1, then running C2=AB and freeing C2. As can be seen here, all the previously leaked mess (packed tasks, function pointers, CoreHandler member arrays etc. ) is now cleaned up nicely. Note: int[] is the static CPU core to logical processor map,)
 
 * Properly called destructors where CoreHandler objects are created using placement new into a malloc'ed buffer.
 * Freed BT.mat (transpose of B) in the methods that use it to convert the problem into row-row dot product.
