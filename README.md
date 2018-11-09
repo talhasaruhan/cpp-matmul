@@ -124,4 +124,14 @@ core, each handling half of the block.
 * 09/11/2018
 * Fixed memory leaks, std::move'd everything
 * Properly called destructors where CoreHandler objects are created using placement new into a malloc'ed buffer.
-* Changed Add function s.t it accepts std::shared_ptr<std::function<void()>[]>, this is only temporary.
+* ~~Changed Add function s.t it accepts std::shared_ptr<std::function<void()>[]>, this is only temporary.~~
+* **Changed the Add() semantics**, now Add function accepts a std::vector<std::function<void()>>. Preferred way of using Add() function now is with initializer lists:
+
+```
+tp.Add({
+    HWLocalThreadPool<>::WrapFunc(MMHelper_MultBlocks,
+        matData, subX, matA.height - rowC, rowC, colC, matA, matB, matBT) ,
+    HWLocalThreadPool<>::WrapFunc(MMHelper_MultBlocks,
+        matData, subX, matA.height - rowC, rowC, colC + subX, matA, matB, matBT)
+});
+```
