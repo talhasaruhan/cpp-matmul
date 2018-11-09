@@ -350,36 +350,32 @@ const Mat MTMatMul(const Mat& matA, const Mat& matB) {
 
 int __cdecl main(int argc, char *argv[])
 {
-    //if (argc < 4)
-    //{
-    //std::cout << "No args\n";
-    //return 0;
-    //}
+    if (argc < 4)
+    {
+    std::cout << "No args\n";
+    return 0;
+    }
 
-    //const char * inputMtxAFile = argv[1];
-    //const char * inputMtxBFile = argv[2];
-    //const char * outMtxABFile = argv[3];
+    const char * inputMtxAFile = argv[1];
+    const char * inputMtxBFile = argv[2];
+    const char * outMtxABFile = argv[3];
 
-    const char * inputMtxAFile = "matrixA.bin";
-    const char * inputMtxBFile = "matrixB.bin";
-    const char * outMtxABFile = "matrixAB-out.bin";
+    //const char * inputMtxAFile = "matrixA.bin";
+    //const char * inputMtxBFile = "matrixB.bin";
+    //const char * outMtxABFile = "matrixAB-out.bin";
 
     const Mat inputMtxA = LoadMat(inputMtxAFile);
     const Mat inputMtxB = LoadMat(inputMtxBFile);
 
     const Mat outMtxAB = MTMatMul(inputMtxA, inputMtxB);
 
-    //DumpMat(outMtxABFile, outMtxAB);
+    DumpMat(outMtxABFile, outMtxAB);
 
-    const Mat outMtxAB2 = MTMatMul(inputMtxA, inputMtxB);
+    //const Mat outMtxAB2 = MTMatMul(inputMtxA, inputMtxB);
 
-    while (1) {
-        std::cout << " ";
-    }
-
-
-
-
+    //while (1) {
+    //    std::cout << " ";
+    //}
 
     return 0;
 }
