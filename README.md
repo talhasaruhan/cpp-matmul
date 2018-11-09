@@ -196,3 +196,5 @@ tp.Add({
         matData, subX, matA.height - rowC, rowC, colC + subX, matA, matB, matBT)
 });
 ```
+* Added Eigen benchmarks
+* Implemented MatMul which should be the general function exposed to outside. It simply selects betwen *MTMatMul* and *ST_TransposedBMatMul* depending on the sizes of the matrices. Current impl.: ```A.height*A.width*A.width*B.width < 125000 : ST_TransposedBMatMul o.w : MTMatMul```
