@@ -123,6 +123,9 @@ const Mat ST_NaiveMatMul(const Mat& matA, const Mat& matB)
 const Mat ST_TransposedBMatMul(const Mat& matA, const Mat& matB)
 const Mat ST_BlockMult(const Mat& matA, const Mat& matB)
 const Mat MTMatMul(const Mat& matA, const Mat& matB) 
+
+/* Selects between MTMatMul, ST_TransposedBMatMul */
+const Mat MatMul(const Mat& matA, const Mat& matB)
 ```
 
 I’ve tried to address vectorization and cache locality in every
@@ -197,4 +200,4 @@ tp.Add({
 });
 ```
 * Added Eigen benchmarks
-* Implemented MatMul which should be the general function exposed to outside. It simply selects betwen *MTMatMul* and *ST_TransposedBMatMul* depending on the sizes of the matrices. Current impl.: ```A.height*A.width*A.width*B.width < 125000 : ST_TransposedBMatMul o.w : MTMatMul```
+* Implemented MatMul which should be the general function exposed to outside. It simply selects betwen *MTMatMul* and *ST_TransposedBMatMul* depending on the sizes of the matrices. Current impl.: ```A.height*A.width*A.width*B.width < K : ST_TransposedBMatMul o.w : MTMatMul```
