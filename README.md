@@ -94,7 +94,7 @@ Output:
 
 ### Comparison
 
-These results are averages of 10-100 runs depending on how small the matrices and how variant the figures are. Among all the benchmarks, numpy was by far the most consistent run to run. Least consistent was the Eigen, showing unreasonably high variance at smaller matrices. 
+These results are averages of 10-100 runs depending on how small the matrices and how variant the figures are. Among all the benchmarks, numpy was by far the most consistent run to run. 
 
 Benchmark | Numpy(MKL)    | Eigen          | This impl. (ST_TransposedBMatMul) | This impl. (MTMatMul) |
 | ------------- | ------------- | ------------- | ------------- | ------------- |
@@ -106,7 +106,7 @@ Benchmark | Numpy(MKL)    | Eigen          | This impl. (ST_TransposedBMatMul) |
 
 
 My multithreaded implementation is only 2.1 times slower than a
-professional BLAS package (18.9 seconds vs 8.9 seconds) and is even slightly faster than the Eigen library. 
+professional BLAS package (18.9 seconds vs 8.9 seconds) and is even slightly faster than the Eigen library without MKL. Of course Eigen is a much more complex library and there might be an overhead associated with it. 
 
 If I had implemented Strassen’s algorithm, for the 10K case, we could naively expect the program
 to run (10^4)^(3-2.8) = 6.3 times faster. Obviously
@@ -133,7 +133,7 @@ function, even algorithm wise naïve ones. For more details, each
 function has a block of comment that explains how it’s designed and why
 so.
 
-## Multithreading utilities ([Repo](https://github.com/talhasaruhan/hwlocalthreadpool))
+## Multithreading utilities ([ThreadPool.h)](https://github.com/talhasaruhan/cpp-matmul/blob/master/MatrixMult/ThreadPool.h))
 
 ``` c++
 Namespace QueryHWCores,
