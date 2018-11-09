@@ -11,7 +11,7 @@ using namespace Eigen;
 
 int main() {
 
-    const unsigned n = 5000;
+    const unsigned n = 1000;
 
     MatrixXd matA = MatrixXd::Random(n, n);
     MatrixXd matB = MatrixXd::Random(n, n);
