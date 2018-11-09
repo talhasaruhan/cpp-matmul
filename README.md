@@ -2,6 +2,8 @@
 
 [See CHANGELOG](#changelog)
 
+[What's next?](#whats-next)
+
 In this project, I’ve implemented multiple methods for multiplying
 matrices, and relevant utilities. My prime focuses were:
 
@@ -166,7 +168,12 @@ core, each handling half of the block.
 
   - Language: /std:c++17 (for several “if constexpr”s. otherwise can be
     compiled with C++ 11)
-    
+
+# What's next?
+* Still a factor of 2.5-3 to achieve MKL performance.
+* Use \_\_restrict keyword to guarantee C doesn't alias with A or B.
+* Use SSE/AVX intrinsics to manually optimize the code.
+
 # Changelog
 
 **Note:** Debugging builds will have arguments pre-set on the MatrixMul.cpp, you can ignore or revert those to accept argument from command line.
