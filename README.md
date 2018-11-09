@@ -32,8 +32,32 @@ On my machine (6 core i7-8700K), I’ve compared my implementation against:
 * Multithreaded python-numpy which uses C/C++ backend and Intel MKL BLAS
 library. 
 * Eigen library (with all the compiler optimizations turned on)
+  * I've tested both Eigen's own implementations and Eigen with MKL+TBB backend.
 
-All example setups are for multiplying two 10,000 X 10,000 matrices, more tests with differently sized matrices can be found at [comparison](#comparison) section.
+## Comparison
+
+These results are averages of 10-100 runs depending on the size of the matrices and consistency of the results.
+
+Benchmark | Numpy(**MKL**)    | Eigen   | Eigen (**MKL+TBB**) | This impl. (**ST_TransposedBMatMul**) | This impl. (**MTMatMul**) |
+| ------------- | ------------- | ------------- | ------------- | ------------- | ------------- |
+(10Kx10K)(10Kx10K) | 8.88s  | 20.33s  | 6.5s |  161s | 18.86s  |
+(5Kx5K)(5Kx5K) | 1.01s  | 2.58s | 900ms |  21.3s | 2.15s  |
+(1Kx1K)(1Kx1K) | 10.0ms  | 28.7ms  | 15ms |  97.5ms | 20.7ms  |
+(500x500)(500x500) | 2.0ms  | 11.0ms  | 9ms |  12.8ms | 6.5ms  |
+(100x100)(100x100) | 1.0ms  | 400us-2.0ms  | 6ms | 150us | 3.5ms  |
+
+
+My multithreaded implementation is only about **~2.5 times slower** than a
+professional **BLAS** package and is even **slightly faster than the Eigen library without MKL**. Of course Eigen is a much more complex library and there might be an overhead associated with it. But in the end, the fact that even a popular library like Eigen performs only as good as my implementation when it's not built with MKL+TBB shows that **you can only get to a certain point without using a BLAS package.**
+
+If I had implemented Strassen’s algorithm, for the 10K case, we could naively expect the program
+to run (10^4)^(3-2.8) = 6.3 times faster. Obviously
+Strassen’s constant for big O notation is much larger, so in real life the performance benefit would likely to be far less than that. But at the end, I think it’s safe to
+assume that Strassen's would still improve the overall performance to a level more comparable with BLAS based programs for larger matrices (>10K?).
+
+## Benchmark setups
+
+All example setups are for multiplying two 10,000 X 10,000 matrices.
 Here are the benchmarks in a couple of lines, the full source code for tests can be found under Benchmark folder
 
 ### Numpy with C++/MKL backend
@@ -46,8 +70,11 @@ Here are the benchmarks in a couple of lines, the full source code for tests can
     8.877262115478516
 ```
 ### Eigen (O2, OMP, Opar, AVX2, fp:fast etc. fully optimized)
-Setup:
+If you want to run the benchmark code with Intel MKL and TBB, follow [this guide](https://eigen.tuxfamily.org/dox/TopicUsingIntelMKL.html) from Eigen.
 ```
+    #define EIGEN_USE_MKL_ALL // test w/wo this
+    #include <Eigen\Dense>
+    
     MatrixXd matA = MatrixXd::Random(10000, 10000);
     MatrixXd matB = MatrixXd::Random(10000, 10000);
     
@@ -55,7 +82,7 @@ Setup:
     which is expected as any less and cpu resources will be free, 
     any more and threads will compete with each other for no reason. */
     
-    setNbThreads(12); 
+    setNbThreads(12); // No-BLAS only, MKL builds on TBB
     
     auto start = std::chrono::high_resolution_clock::now();
     MatrixXd matC = matA * matB;
@@ -63,12 +90,7 @@ Setup:
 
     std::cout << "Matrix Multiplication: " << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() << " microseconds.\n";
 ```
-Output:
-```
-    Matrix Multiplication: 20327617 microseconds.
-```
 ###  My implementation
-Setup:
 ```
     /*  input matrices of 10Kx10K are generated beforehand using MatrixGenerator.exe */
     const Mat inputMtxA = LoadMat(inputMtxAFile);
@@ -80,38 +102,6 @@ Setup:
 
     std::cout << "Matrix Multiplication: " << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() << " microseconds.\n";
 ```
-Output:
-```
-    MatrixGenerator.exe && MatrixMult.exe matrixA.bin matrixB.bin matrixAB-out.bin
-    a: [10000 10000] | b: [10000 10000]
-    Generation w/ tranposed mult. took: 161384008 microseconds.
-    generated
-    Queued!
-    Done!
-    Matrix Multiplication: 18858824 microseconds.
-    Correct.
-```
-
-### Comparison
-
-These results are averages of 10-100 runs depending on how small the matrices and how variant the figures are. Among all the benchmarks, numpy was by far the most consistent run to run. Least consistent was the Eigen, showing unreasonably high variance at smaller matrices. 
-
-Benchmark | Numpy(MKL)    | Eigen          | This impl. (ST_TransposedBMatMul) | This impl. (MTMatMul) |
-| ------------- | ------------- | ------------- | ------------- | ------------- |
-(10Kx10K)(10Kx10K) | 8.88s  | 20.33s  |  161s | 18.86s  |
-(5Kx5K)(5Kx5K) | 1.01s  | 2.58s  |  21.3s | 2.15s  |
-(1Kx1K)(1Kx1K) | 10.0ms  | 28.7ms  |  97.5ms | 20.7ms  |
-(500x500)(500x500) | 2.0ms  | 11.0ms  |  12.8ms | 6.5ms  |
-(100x100)(100x100) | 1.0ms  | 400us-2.0ms  |  150us | 3.5ms  |
-
-
-My multithreaded implementation is only 2.1 times slower than a
-professional BLAS package (18.9 seconds vs 8.9 seconds) and is even slightly faster than the Eigen library. 
-
-If I had implemented Strassen’s algorithm, for the 10K case, we could naively expect the program
-to run (10^4)^(3-2.8) = 6.3 times faster. Obviously
-Strassen’s constant for big O notation is much larger, so in real life the performance benefit would likely to be far less than that. But at the end, I think it’s safe to
-assume that Strassen's would still improve the overall performance to a level more comparable with numpy for larger matrices (>10K?).
 
 # Code details:
 
@@ -133,7 +123,7 @@ function, even algorithm wise naïve ones. For more details, each
 function has a block of comment that explains how it’s designed and why
 so.
 
-## Multithreading utilities ([Repo](https://github.com/talhasaruhan/hwlocalthreadpool))
+## Multithreading utilities ([ThreadPool.h](https://github.com/talhasaruhan/cpp-matmul/blob/master/MatrixMult/ThreadPool.h))
 
 ``` c++
 Namespace QueryHWCores,
