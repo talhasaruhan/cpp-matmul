@@ -180,15 +180,15 @@ core, each handling half of the block.
 
 **Note:** Debugging builds will have arguments pre-set on the MatrixMul.cpp, you can ignore or revert those to accept argument from command line.
 
-* 09/11/2018
-* Fixed memory leaks
+### 09/11/2018
+* **Fixed memory leaks!**
 
 ![no_leaks_f2](https://user-images.githubusercontent.com/15991519/48242727-a0d70300-e3ed-11e8-80e9-01954f2ec6b9.PNG)
 
 (This is  the heap profile of the program after running C1 = AB, freeing C1, then running C2=AB and freeing C2. As can be seen here, all the previously leaked mess (packed tasks, function pointers, CoreHandler member arrays etc. ) is now cleaned up nicely. Note: int[] is the static CPU core to logical processor map,)
 
-* Properly called destructors where CoreHandler objects are created using placement new into a malloc'ed buffer.
-* Freed BT.mat (transpose of B) in the methods that use it to convert the problem into row-row dot product.
+* **Properly called destructors** where CoreHandler objects are created using placement new into a malloc'ed buffer.
+* **Freed BT.mat** (transpose of B) in the methods that use it to convert the problem into row-row dot product.
 * ~~Changed Add function s.t it accepts std::shared_ptr<std::function<void()>[]>, this is only temporary.~~
 * **Changed the Add() semantics**, now Add function accepts a std::vector<std::function<void()>>. Preferred way of using Add() function now is with initializer lists:
 
