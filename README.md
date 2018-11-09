@@ -2,6 +2,8 @@
 
 [See CHANGELOG](#changelog)
 
+[What's next?](#whats-next)
+
 In this project, I’ve implemented multiple methods for multiplying
 matrices, and relevant utilities. My prime focuses were:
 
@@ -48,7 +50,7 @@ Benchmark | Numpy(**MKL**)    | Eigen   | Eigen (**MKL+TBB**) | This impl. (**ST
 
 
 My multithreaded implementation is only about **~2.5 times slower** than a
-professional **BLAS** package and is even **slightly faster than the Eigen library without MKL**. Of course Eigen is a much more complex library and there might be an overhead associated with it. But in the end, the fact that even a popular library like Eigen performs only as good as my implementation when it's not built with MKL+TBB shows that **you can only get to a certain point without using a BLAS package.**
+professional **BLAS** package and is even **slightly faster than the Eigen library without MKL**. Of course Eigen is a much more complex library and there might be an overhead associated with it. But in the end, the fact that even a popular library like Eigen performs only as good as my implementation when it's not built with MKL+TBB shows that BLAS packages are on another level. However that doesn't mean we can't try to catch them in performance.
 
 If I had implemented Strassen’s algorithm, for the 10K case, we could naively expect the program
 to run (10^4)^(3-2.8) = 6.3 times faster. Obviously
@@ -83,6 +85,7 @@ If you want to run the benchmark code with Intel MKL and TBB, follow [this guide
     any more and threads will compete with each other for no reason. */
     
     setNbThreads(12); // No-BLAS only, MKL builds on TBB
+    mkl_set_num_threads(12); // mkl only
     
     auto start = std::chrono::high_resolution_clock::now();
     MatrixXd matC = matA * matB;
@@ -165,7 +168,12 @@ core, each handling half of the block.
 
   - Language: /std:c++17 (for several “if constexpr”s. otherwise can be
     compiled with C++ 11)
-    
+
+# What's next?
+* Still a factor of 2.5-3 to achieve MKL performance.
+* Use \_\_restrict keyword to guarantee C doesn't alias with A or B.
+* Use SSE/AVX intrinsics to manually optimize the code.
+
 # Changelog
 
 **Note:** Debugging builds will have arguments pre-set on the MatrixMul.cpp, you can ignore or revert those to accept argument from command line.
