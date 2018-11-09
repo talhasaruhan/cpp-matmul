@@ -348,6 +348,15 @@ const Mat MTMatMul(const Mat& matA, const Mat& matB) {
     return matC;
 }
 
+/* A very, very simple toggle between two functions depending on the total number of ops */
+const Mat MatMul(const Mat& matA, const Mat& matB) {
+    /* A:  a,b B: b,c => # of op: a*b*b*c */
+    if (matA.height*matA.width*matA.width*matB.width < 125000) {
+        return ST_TransposedBMatMul(matA, matB);
+    }
+    return MTMatMul(matA, matB);
+}
+
 int __cdecl main(int argc, char *argv[])
 {
     if (argc < 4)
@@ -369,7 +378,7 @@ int __cdecl main(int argc, char *argv[])
 
     auto start = std::chrono::high_resolution_clock::now();
 
-    const Mat outMtxAB = MTMatMul(inputMtxA, inputMtxB);
+    const Mat outMtxAB = MatMul(inputMtxA, inputMtxB);
 
     auto end = std::chrono::high_resolution_clock::now();
 
