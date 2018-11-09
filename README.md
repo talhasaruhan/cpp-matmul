@@ -45,6 +45,7 @@ Here are the benchmarks in a couple of lines, the full source code for each test
     8.877262115478516
 ```
 ### Eigen (O2, OMP, Opar, AVX2, fp:fast etc. fully optimized)
+Setup:
 ```
     MatrixXd matA = MatrixXd::Random(n, n);
     MatrixXd matB = MatrixXd::Random(n, n);
@@ -56,13 +57,14 @@ Here are the benchmarks in a couple of lines, the full source code for each test
     auto end = std::chrono::high_resolution_clock::now();
 
     std::cout << "Matrix Multiplication: " << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() << " microseconds.\n";
-    
-    /**********OUTPUT*********/
+```
+Output:
+```
     Matrix Multiplication: 20327617 microseconds.
 ```
 ###  My implementation
+Setup:
 ```
-    /**********MAIN***********/
     const Mat inputMtxA = LoadMat(inputMtxAFile);
     const Mat inputMtxB = LoadMat(inputMtxBFile);
 
@@ -72,8 +74,8 @@ Here are the benchmarks in a couple of lines, the full source code for each test
 
     std::cout << "Matrix Multiplication: " << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() << " microseconds.\n";
 ```
+Output:
 ```
-    /*******OUTPUT***********/
     MatrixGenerator.exe && MatrixMult.exe matrixA.bin matrixB.bin matrixAB-out.bin
     a: [10000 10000] | b: [10000 10000]
     Generation w/ tranposed mult. took: 161384008 microseconds.
@@ -83,6 +85,11 @@ Here are the benchmarks in a couple of lines, the full source code for each test
     Matrix Multiplication: 18858824 microseconds.
     Correct.
 ```
+
+### Comparison
+| Numpy(MKL)    | Eigen          | This impl. |
+| ------------- | ------------- | ------------- | 
+| 8.88s  | 20.33s  | 18.86s  |
 
 My multithreaded implementation is only 2.1 times slower than a
 professional BLAS package (18.9 seconds vs 8.9 seconds) and is even slightly faster than the Eigen library. If I’d
