@@ -71,10 +71,12 @@ static unsigned RoundUpPwr2(unsigned val, unsigned pwr2)
 }
 
 /* Single threaded, should I multithread this as well?
+__declspec(noalias)
 Honestly, I don't think it will have any significant effect. n^2 vs n^3 */
+__declspec(noalias)
 const Mat TransposeMat(const Mat &mat) {
     const unsigned tRowSpan = RoundUpPwr2(mat.height, 64 / sizeof(float));
-    float * const tData = (float*)malloc(mat.width*tRowSpan * sizeof(float));
+    float * __restrict const tData = (float*)malloc(mat.width*tRowSpan * sizeof(float));
 
     Mat T{
         mat.height,
@@ -94,6 +96,7 @@ const Mat TransposeMat(const Mat &mat) {
 }
 
 static void PrintMat(const Mat &mat) {
+    printf("w, h, rS: %d %d %d\n", mat.width, mat.height, mat.rowSpan);
     for (int i = 0; i < mat.height; i++) {
         for (int j = 0; j < mat.width; ++j) {
             printf("%f ", mat.mat[i*mat.rowSpan + j]);
@@ -153,7 +156,6 @@ const Mat ST_TransposedBMatMul(const Mat& matA, const Mat& matB) {
         matData
     };
 
-    matC.rowSpan = matB.width;
     const Mat matBT = TransposeMat(matB);
     for (int rowC = 0; rowC < matA.height; ++rowC) {
         //if (rowC % 10 == 0)
@@ -163,7 +165,7 @@ const Mat ST_TransposedBMatMul(const Mat& matA, const Mat& matB) {
             for (int pos=0; pos < matA.width; ++pos) {
                 accumulate += matA.mat[rowC*matA.rowSpan + pos] * matBT.mat[colC*matBT.rowSpan + pos];
             }
-            matData[rowC*matB.width + colC] = accumulate;
+            matData[rowC*matB.rowSpan + colC] = accumulate;
         }
     }
 
@@ -196,7 +198,6 @@ const Mat ST_BlockMult(const Mat& matA, const Mat& matB) {
 
     const unsigned blockX = 16, blockY = 16;
     
-    matC.rowSpan = matB.width;
     const Mat matBT = TransposeMat(matB);
     
     int rowC = 0;
@@ -211,7 +212,7 @@ const Mat ST_BlockMult(const Mat& matA, const Mat& matB) {
                     for (int pos=0; pos < matA.width; ++pos) {
                         accumulate += matA.mat[matAoffset + pos] * matBT.mat[matBoffset + pos];
                     }
-                    matData[r*matB.width + c] = accumulate;
+                    matData[r*matB.rowSpan + c] = accumulate;
                 }
             }
         }
@@ -223,7 +224,7 @@ const Mat ST_BlockMult(const Mat& matA, const Mat& matB) {
                 for (int pos = 0; pos < matA.width; ++pos) {
                     accumulate += matA.mat[matAoffset + pos] * matBT.mat[matBoffset + pos];
                 }
-                matData[r*matB.width + c] = accumulate;
+                matData[r*matB.rowSpan + c] = accumulate;
             }
         }
     }
@@ -234,7 +235,7 @@ const Mat ST_BlockMult(const Mat& matA, const Mat& matB) {
             for (int pos=0; pos < matA.width; ++pos) {
                 accumulate += matA.mat[matAoffset + pos] * matBT.mat[matBoffset + pos];
             }
-            matData[rowC*matB.width + colC] = accumulate;
+            matData[rowC*matB.rowSpan + colC] = accumulate;
         }
     }
 
@@ -243,7 +244,8 @@ const Mat ST_BlockMult(const Mat& matA, const Mat& matB) {
     return matC;
 }
 
-void MMHelper_MultBlocks(float* matData, const unsigned blockX, const unsigned blockY,
+__declspec(noalias)
+void MMHelper_MultBlocks(float* __restrict const matData, const unsigned blockX, const unsigned blockY,
     const unsigned rowC, const unsigned colC,
     const Mat& matA, const Mat& matB, const Mat& matBT)
 {
@@ -258,12 +260,10 @@ void MMHelper_MultBlocks(float* matData, const unsigned blockX, const unsigned b
                 accumulate += matA.mat[matAoffset + pos] * matBT.mat[matBoffset + pos];
             }
 
-            matData[r*matB.width + c] = accumulate;
-            //printf("%d %d, %f\n", r, c, accumulate);
+            matData[r*matB.rowSpan + c] = accumulate;
         }
     }
 }
-
 
 /*
 * You will notice some of the loops are manually unrolled and some are kept as one liners
@@ -273,6 +273,7 @@ void MMHelper_MultBlocks(float* matData, const unsigned blockX, const unsigned b
 * So, this is pretty compiler dependent and honestly I'm not a fan.
 * I'd just use compiler intrinsics if I could, but I guess they'd count as ASM.
 */
+__declspec(noalias)
 const Mat MTMatMul(const Mat& matA, const Mat& matB) {
     /*
     * Now, let's parallelize the code!
@@ -294,12 +295,14 @@ const Mat MTMatMul(const Mat& matA, const Mat& matB) {
         matData
     };
 
+    //printf("%d %d\n", matB.width, matB.rowSpan);
+
     const unsigned blockX = 32, blockY = 32;
     const unsigned subX = blockX >> 1;
 
-    matC.rowSpan = matB.width;
     const Mat matBT = TransposeMat(matB);
 
+    /* Using hardware local threads reduces 5Kx5K MM from 2.45s to 2.15s 12% improvement! */
     HWLocalThreadPool<6, 2> tp;
 
     int rowC = 0;

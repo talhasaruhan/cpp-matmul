@@ -16,6 +16,8 @@ int main() {
 
     const unsigned n = 10000;
 
+    mkl_set_num_threads(12);
+
     MatrixXd matA = MatrixXd::Random(n, n);
     MatrixXd matB = MatrixXd::Random(n, n);
 
