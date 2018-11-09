@@ -33,6 +33,7 @@ On my machine (6 core i7-8700K), I’ve compared my implementation against:
 library. 
 * Eigen library (with all the compiler optimizations turned on)
 
+All benchmarks are for multiplying two 10,000 X 10,000 matrices.
 Here are the benchmarks in a couple of lines, the full source code for each test can be found under Benchmark folder
 
 ### Numpy with C++/MKL backend
@@ -47,8 +48,8 @@ Here are the benchmarks in a couple of lines, the full source code for each test
 ### Eigen (O2, OMP, Opar, AVX2, fp:fast etc. fully optimized)
 Setup:
 ```
-    MatrixXd matA = MatrixXd::Random(n, n);
-    MatrixXd matB = MatrixXd::Random(n, n);
+    MatrixXd matA = MatrixXd::Random(10000, 10000);
+    MatrixXd matB = MatrixXd::Random(10000, 10000);
 
     setNbThreads(12);
     
@@ -65,6 +66,7 @@ Output:
 ###  My implementation
 Setup:
 ```
+    /*  input matrices of 10Kx10K are generated beforehand using MatrixGenerator.exe */
     const Mat inputMtxA = LoadMat(inputMtxAFile);
     const Mat inputMtxB = LoadMat(inputMtxBFile);
 
@@ -87,9 +89,9 @@ Output:
 ```
 
 ### Comparison
-| Numpy(MKL)    | Eigen          | This impl. |
-| ------------- | ------------- | ------------- | 
-| 8.88s  | 20.33s  | 18.86s  |
+Benchmark | Numpy(MKL)    | Eigen          | This impl. |
+| ------------- | ------------- | ------------- | ------------- | 
+(10Kx10K)(10Kx10K) | 8.88s  | 20.33s  | 18.86s  |
 
 My multithreaded implementation is only 2.1 times slower than a
 professional BLAS package (18.9 seconds vs 8.9 seconds) and is even slightly faster than the Eigen library. If I’d
