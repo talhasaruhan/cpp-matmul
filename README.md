@@ -123,6 +123,9 @@ const Mat ST_NaiveMatMul(const Mat& matA, const Mat& matB)
 const Mat ST_TransposedBMatMul(const Mat& matA, const Mat& matB)
 const Mat ST_BlockMult(const Mat& matA, const Mat& matB)
 const Mat MTMatMul(const Mat& matA, const Mat& matB) 
+
+/* Selects between MTMatMul, ST_TransposedBMatMul */
+const Mat MatMul(const Mat& matA, const Mat& matB)
 ```
 
 I’ve tried to address vectorization and cache locality in every
@@ -177,14 +180,15 @@ core, each handling half of the block.
 
 **Note:** Debugging builds will have arguments pre-set on the MatrixMul.cpp, you can ignore or revert those to accept argument from command line.
 
-* 09/11/2018
-* Fixed memory leaks
+### 09/11/2018
+* **Fixed memory leaks!**
 
-![no_leaks_f](https://user-images.githubusercontent.com/15991519/48237828-96127300-e3d9-11e8-9596-10e03797fc43.PNG)
-(This is  the heap profile of the program after running C = AB, as can be seen here, all the previously leaked mess is now cleaned up nicely. Note: int[] is the CPU core to logical processor map,)
+![no_leaks_f2](https://user-images.githubusercontent.com/15991519/48242727-a0d70300-e3ed-11e8-80e9-01954f2ec6b9.PNG)
 
-* Properly called destructors where CoreHandler objects are created using placement new into a malloc'ed buffer.
-* Freed BT.mat (transpose of B) in the methods that use it to convert the problem into row-row dot product.
+(This is  the heap profile of the program after running C1 = AB, freeing C1, then running C2=AB and freeing C2. As can be seen here, all the previously leaked mess (packed tasks, function pointers, CoreHandler member arrays etc. ) is now cleaned up nicely. Note: int[] is the static CPU core to logical processor map,)
+
+* **Properly called destructors** where CoreHandler objects are created using placement new into a malloc'ed buffer.
+* **Freed BT.mat** (transpose of B) in the methods that use it to convert the problem into row-row dot product.
 * ~~Changed Add function s.t it accepts std::shared_ptr<std::function<void()>[]>, this is only temporary.~~
 * **Changed the Add() semantics**, now Add function accepts a std::vector<std::function<void()>>. Preferred way of using Add() function now is with initializer lists:
 
@@ -196,3 +200,5 @@ tp.Add({
         matData, subX, matA.height - rowC, rowC, colC + subX, matA, matB, matBT)
 });
 ```
+* Added Eigen benchmarks
+* Implemented MatMul which should be the general function exposed to outside. It simply selects betwen *MTMatMul* and *ST_TransposedBMatMul* depending on the sizes of the matrices. Current impl.: ```A.height*A.width*A.width*B.width < K : ST_TransposedBMatMul o.w : MTMatMul```
