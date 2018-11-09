@@ -367,15 +367,15 @@ int __cdecl main(int argc, char *argv[])
     const Mat inputMtxA = LoadMat(inputMtxAFile);
     const Mat inputMtxB = LoadMat(inputMtxBFile);
 
+    auto start = std::chrono::high_resolution_clock::now();
+
     const Mat outMtxAB = MTMatMul(inputMtxA, inputMtxB);
 
+    auto end = std::chrono::high_resolution_clock::now();
+
+    std::cout << "Matrix Multiplication: " << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() << " microseconds.\n";
+    
     DumpMat(outMtxABFile, outMtxAB);
-
-    //const Mat outMtxAB2 = MTMatMul(inputMtxA, inputMtxB);
-
-    //while (1) {
-    //    std::cout << " ";
-    //}
 
     return 0;
 }
