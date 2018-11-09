@@ -93,11 +93,16 @@ Output:
 ```
 
 ### Comparison
-Benchmark | Numpy(MKL)    | Eigen          | This impl. (MTMatMul) |
-| ------------- | ------------- | ------------- | ------------- | 
-(10Kx10K)(10Kx10K) | 8.88s  | 20.33s  | 18.86s  |
-(5Kx5K)(5Kx5K) | 1.01s  | 2.58s  | 2.15s  |
-(1Kx1K)(1Kx1K) | 10.0ms  | 28.7ms  | 20.7ms  |
+
+These results are averages of 10-100 runs depending on how small the matrices and how variant the figures are. Among all the benchmarks, numpy was by far the most consistent run to run. Least consistent was the Eigen, showing unreasonably high variance at smaller matrices. 
+
+Benchmark | Numpy(MKL)    | Eigen          | This impl. (ST_TransposedBMatMul) | This impl. (MTMatMul) |
+| ------------- | ------------- | ------------- | ------------- | ------------- |
+(10Kx10K)(10Kx10K) | 8.88s  | 20.33s  |  161s | 18.86s  |
+(5Kx5K)(5Kx5K) | 1.01s  | 2.58s  |  21.3s | 2.15s  |
+(1Kx1K)(1Kx1K) | 10.0ms  | 28.7ms  |  97.5ms | 20.7ms  |
+(500x500)(500x500) | 2.0ms  | 11.0ms  |  12.8ms | 6.5ms  |
+(100x100)(100x100) | 1.0ms  | 400us-2.0ms  |  150us | 3.5ms  |
 
 
 My multithreaded implementation is only 2.1 times slower than a
