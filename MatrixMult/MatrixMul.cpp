@@ -166,7 +166,9 @@ const Mat ST_TransposedBMatMul(const Mat& matA, const Mat& matB) {
             matData[rowC*matB.width + colC] = accumulate;
         }
     }
-    
+
+    free(matBT.mat);
+
     return matC;
 }
 
@@ -235,6 +237,8 @@ const Mat ST_BlockMult(const Mat& matA, const Mat& matB) {
             matData[rowC*matB.width + colC] = accumulate;
         }
     }
+
+    free(matBT.mat);
     
     return matC;
 }
@@ -303,38 +307,38 @@ const Mat MTMatMul(const Mat& matA, const Mat& matB) {
         int colC = 0;
         /* Process BlockX X BlockY blocks */
         for (; colC < matB.width - blockX; colC += blockX) {
-            std::shared_ptr<std::function<void()>[]> f(new std::function<void()>[2]());
-            f[0] = std::move(HWLocalThreadPool<>::WrapFunc(MMHelper_MultBlocks,
-                matData, subX, blockY, rowC, colC, matA, matB, matBT));
-            f[1] = std::move(HWLocalThreadPool<>::WrapFunc(MMHelper_MultBlocks,
-                matData, subX, blockY, rowC, colC + subX, matA, matB, matBT));
-            tp.Add(f);
+            tp.Add({
+                HWLocalThreadPool<>::WrapFunc(MMHelper_MultBlocks,
+                    matData, subX, blockY, rowC, colC, matA, matB, matBT),
+                HWLocalThreadPool<>::WrapFunc(MMHelper_MultBlocks,
+                    matData, subX, blockY, rowC, colC + subX, matA, matB, matBT)                
+            });
         }
         /* Process remainings at the end of the row, width < blockX */
-        std::shared_ptr<std::function<void()>[]> f(new std::function<void()>[2]());
-        f[0] = std::move(HWLocalThreadPool<>::WrapFunc(MMHelper_MultBlocks,
-            matData, matB.width - colC, blockY, rowC, colC, matA, matB, matBT));
-        f[1] = std::move([]() {});
-        tp.Add(f);
+        tp.Add({
+            HWLocalThreadPool<>::WrapFunc(MMHelper_MultBlocks,
+                matData, matB.width - colC, blockY, rowC, colC, matA, matB, matBT),
+            []() {}
+        });
     }
 
     /* Process last row, height < blockY, col+=blockX */
     int colC = 0;
     for (; colC < matB.width - blockX; colC += blockX) {
-        std::shared_ptr<std::function<void()>[]> f(new std::function<void()>[2]());
-        f[0] = HWLocalThreadPool<>::WrapFunc(MMHelper_MultBlocks,
-            matData, subX, matA.height - rowC, rowC, colC, matA, matB, matBT);
-        f[1] = HWLocalThreadPool<>::WrapFunc(MMHelper_MultBlocks,
-            matData, subX, matA.height - rowC, rowC, colC + subX, matA, matB, matBT);
-        tp.Add(f);
+        tp.Add({
+            HWLocalThreadPool<>::WrapFunc(MMHelper_MultBlocks,
+                matData, subX, matA.height - rowC, rowC, colC, matA, matB, matBT) ,
+            HWLocalThreadPool<>::WrapFunc(MMHelper_MultBlocks,
+                matData, subX, matA.height - rowC, rowC, colC + subX, matA, matB, matBT)
+        });
     }
 
     /* Process bottom right block, h < bY, w < bX */
-    std::shared_ptr<std::function<void()>[]> f(new std::function<void()>[2]());
-    f[0] = std::move(HWLocalThreadPool<>::WrapFunc(MMHelper_MultBlocks,
-        matData, matB.width - colC, matA.height - rowC, rowC, colC, matA, matB, matBT));
-    f[1] = std::move([]() {});
-    tp.Add(f);
+    tp.Add({
+            HWLocalThreadPool<>::WrapFunc(MMHelper_MultBlocks,
+                matData, matB.width - colC, matA.height - rowC, rowC, colC, matA, matB, matBT),
+            []() {}
+        });
 
     std::cout << "Queued!\n";
     tp.Close();

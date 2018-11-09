@@ -260,7 +260,7 @@ public:
             Close();
     }
 
-    void Add(std::shared_ptr<std::function<void()>[]> F) {
+    void Add(std::vector<std::function<void()>> F) {
         m_queue.Push(F);
         m_queueToCoreNotifier.notify_one();
     }
@@ -484,7 +484,7 @@ protected:
         bool* m_childThreadOnline;
         bool m_terminate;
 
-        std::shared_ptr<std::function<void()>[]> m_job;
+        std::vector<std::function<void()>> m_job;
         std::function<void()> m_ownJob;
 
         //std::mutex m_coreMutex;
@@ -497,7 +497,7 @@ protected:
     CoreHandler* m_coreHandlers;
     std::thread* m_coreHandlerThreads;
 
-    Queue<std::shared_ptr<std::function<void()>[]>> m_queue;
+    Queue<std::vector<std::function<void()>>> m_queue;
 
 
     bool m_terminate, m_waitToFinish;
