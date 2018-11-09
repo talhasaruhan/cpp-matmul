@@ -130,6 +130,7 @@ core, each handling half of the block.
 (This is  the heap profile of the program after running C = AB, as can be seen here, all the previously leaked mess is now cleaned up nicely. Note: int[] is the CPU core to logical processor map,)
 
 * Properly called destructors where CoreHandler objects are created using placement new into a malloc'ed buffer.
+* Freed BT.mat (transpose of B) in the methods that use it to convert the problem into row-row dot product.
 * ~~Changed Add function s.t it accepts std::shared_ptr<std::function<void()>[]>, this is only temporary.~~
 * **Changed the Add() semantics**, now Add function accepts a std::vector<std::function<void()>>. Preferred way of using Add() function now is with initializer lists:
 
