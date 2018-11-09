@@ -83,6 +83,7 @@ If you want to run the benchmark code with Intel MKL and TBB, follow [this guide
     any more and threads will compete with each other for no reason. */
     
     setNbThreads(12); // No-BLAS only, MKL builds on TBB
+    mkl_set_num_threads(12); // mkl only
     
     auto start = std::chrono::high_resolution_clock::now();
     MatrixXd matC = matA * matB;
