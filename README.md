@@ -23,41 +23,83 @@ you don’t have “tee” command, just delete the last part or install
 GnuWin32 CoreUtils.
 
 ``` bash
-for /l %x in (1, 1, 100) do echo %x && (MatrixGenerator.exe && printf "Generated valid output. Testing...\n" && MatrixMulTester.exe matrixAB.bin MatrixMult.exe matrixA.bin matrixB.bin matrixAB-out.bin && printf \n\n ) | tee -a out.txt
+for /l %x in (1, 1, 100) do echo %x && (MatrixGenerator.exe && printf "Generated valid output. Testing...\n" && MatrixMult.exe matrixA.bin matrixB.bin matrixAB-out.bin && printf \n\n ) | tee -a out.txt
 ```
 
-*(Note the default valid output generator is transposed B method, since naïve method takes too long for big
-matrices.)*
+# Benchmarks for large matrices
 
-# A benchmark for large matrices
+On my machine (6 core i7-8700K), I’ve compared my implementation against:
+* Multithreaded python-numpy which uses C/C++ backend and Intel MKL BLAS
+library. 
+* Eigen library (with all the compiler optimizations turned on)
 
-On my machine (6 core i7-8700K), I’ve compared my implementation against
-multithreaded python-numpy which uses C/C++ backend and Intel MKL BLAS
-library. (Note that both implementations use close to 100% CPU)
+All benchmarks are for multiplying two 10,000 X 10,000 matrices.
+Here are the benchmarks in a couple of lines, the full source code for each test can be found under Benchmark folder
 
+### Numpy with C++/MKL backend
+```
     >>> import numpy as np
     >>> a = np.random.randn(10000, 10000)
     >>> import time
     >>> start = time.time(); b=np.dot(a, a); end=time.time();
     >>> end-start
     8.877262115478516
+```
+### Eigen (O2, OMP, Opar, AVX2, fp:fast etc. fully optimized)
+Setup:
+```
+    MatrixXd matA = MatrixXd::Random(10000, 10000);
+    MatrixXd matB = MatrixXd::Random(10000, 10000);
 
-    MatrixGenerator.exe && echo generated && MatrixMulTester.exe matrixAB.bin MatrixMult.exe matrixA.bin matrixB.bin matrixAB-out.bin
+    setNbThreads(12);
+    
+    auto start = std::chrono::high_resolution_clock::now();
+    MatrixXd matC = matA * matB;
+    auto end = std::chrono::high_resolution_clock::now();
+
+    std::cout << "Matrix Multiplication: " << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() << " microseconds.\n";
+```
+Output:
+```
+    Matrix Multiplication: 20327617 microseconds.
+```
+###  My implementation
+Setup:
+```
+    /*  input matrices of 10Kx10K are generated beforehand using MatrixGenerator.exe */
+    const Mat inputMtxA = LoadMat(inputMtxAFile);
+    const Mat inputMtxB = LoadMat(inputMtxBFile);
+
+    auto start = std::chrono::high_resolution_clock::now();
+    const Mat outMtxAB = MTMatMul(inputMtxA, inputMtxB);
+    auto end = std::chrono::high_resolution_clock::now();
+
+    std::cout << "Matrix Multiplication: " << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() << " microseconds.\n";
+```
+Output:
+```
+    MatrixGenerator.exe && MatrixMult.exe matrixA.bin matrixB.bin matrixAB-out.bin
     a: [10000 10000] | b: [10000 10000]
     Generation w/ tranposed mult. took: 161384008 microseconds.
     generated
     Queued!
     Done!
-    Runtime: 20676630 microseconds.
+    Matrix Multiplication: 18858824 microseconds.
     Correct.
+```
 
-My multithreaded implementation is only 2.3 times slower than a
-professional BLAS package (20.7 seconds vs 8.9 seconds). If I’d
+### Comparison
+Benchmark | Numpy(MKL)    | Eigen          | This impl. |
+| ------------- | ------------- | ------------- | ------------- | 
+(10Kx10K)(10Kx10K) | 8.88s  | 20.33s  | 18.86s  |
+
+My multithreaded implementation is only 2.1 times slower than a
+professional BLAS package (18.9 seconds vs 8.9 seconds) and is even slightly faster than the Eigen library. If I’d
 implemented Strassen’s algorithm, assuming same constants, the program
 would run (10^4)^(3-2.8) = 6.3 times faster. Obviously
 Strassen’s constant is perceptibly larger, but I think it’s safe to
 assume it would improve the overall performance to a more comparable
-level.
+level with numpy.
 
 # Code details:
 
