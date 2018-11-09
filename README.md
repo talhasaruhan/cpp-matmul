@@ -23,11 +23,8 @@ you don’t have “tee” command, just delete the last part or install
 GnuWin32 CoreUtils.
 
 ``` bash
-for /l %x in (1, 1, 100) do echo %x && (MatrixGenerator.exe && printf "Generated valid output. Testing...\n" && MatrixMulTester.exe matrixAB.bin MatrixMult.exe matrixA.bin matrixB.bin matrixAB-out.bin && printf \n\n ) | tee -a out.txt
+for /l %x in (1, 1, 100) do echo %x && (MatrixGenerator.exe && printf "Generated valid output. Testing...\n" && MatrixMult.exe matrixA.bin matrixB.bin matrixAB-out.bin && printf \n\n ) | tee -a out.txt
 ```
-
-*(Note the default valid output generator is transposed B method, since naïve method takes too long for big
-matrices.)*
 
 # Benchmarks for large matrices
 
@@ -63,21 +60,32 @@ Here are the benchmarks in a couple of lines, the full source code for each test
     /**********OUTPUT*********/
     Matrix Multiplication: 20327617 microseconds.
 ```
-###  My implementation, (see build section for optimization details)
+###  My implementation
 ```
-    MatrixGenerator.exe && echo generated && MatrixMulTester.exe matrixAB.bin MatrixMult.exe matrixA.bin matrixB.bin matrixAB-out.bin
+    /**********MAIN***********/
+    const Mat inputMtxA = LoadMat(inputMtxAFile);
+    const Mat inputMtxB = LoadMat(inputMtxBFile);
+
+    auto start = std::chrono::high_resolution_clock::now();
+    const Mat outMtxAB = MTMatMul(inputMtxA, inputMtxB);
+    auto end = std::chrono::high_resolution_clock::now();
+
+    std::cout << "Matrix Multiplication: " << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() << " microseconds.\n";
+```
+```
+    /*******OUTPUT***********/
+    MatrixGenerator.exe && MatrixMult.exe matrixA.bin matrixB.bin matrixAB-out.bin
     a: [10000 10000] | b: [10000 10000]
     Generation w/ tranposed mult. took: 161384008 microseconds.
     generated
     Queued!
     Done!
     Matrix Multiplication: 18858824 microseconds.
-    Runtime: 20519791 microseconds.
     Correct.
 ```
 
-My multithreaded implementation is only 2.3 times slower than a
-professional BLAS package (20.7 seconds vs 8.9 seconds) and is even slightly faster than the Eigen library. If I’d
+My multithreaded implementation is only 2.1 times slower than a
+professional BLAS package (18.9 seconds vs 8.9 seconds) and is even slightly faster than the Eigen library. If I’d
 implemented Strassen’s algorithm, assuming same constants, the program
 would run (10^4)^(3-2.8) = 6.3 times faster. Obviously
 Strassen’s constant is perceptibly larger, but I think it’s safe to
