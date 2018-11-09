@@ -11,7 +11,7 @@ using namespace Eigen;
 
 int main() {
 
-    const unsigned n = 10000;
+    const unsigned n = 5000;
 
     MatrixXd matA = MatrixXd::Random(n, n);
     MatrixXd matB = MatrixXd::Random(n, n);
@@ -24,7 +24,7 @@ int main() {
 
     auto end = std::chrono::high_resolution_clock::now();
 
-    std::cout << "Runtime: " << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() << " microseconds.\n";
+    std::cout << "Matrix Multiplication: " << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() << " microseconds.\n";
 
 
     while (1) {}
