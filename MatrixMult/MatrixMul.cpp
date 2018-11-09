@@ -34,6 +34,7 @@ const Mat LoadMat(const char * const filename) {
 
     if (!in.is_open()) {
         std::cout << "Err loading!\n";
+        in.close();
         return {};
     }
 
@@ -302,7 +303,7 @@ const Mat MTMatMul(const Mat& matA, const Mat& matB) {
         int colC = 0;
         /* Process BlockX X BlockY blocks */
         for (; colC < matB.width - blockX; colC += blockX) {
-            std::function<void()>* f = new std::function<void()>[2];
+            std::shared_ptr<std::function<void()>[]> f(new std::function<void()>[2]());
             f[0] = std::move(HWLocalThreadPool<>::WrapFunc(MMHelper_MultBlocks,
                 matData, subX, blockY, rowC, colC, matA, matB, matBT));
             f[1] = std::move(HWLocalThreadPool<>::WrapFunc(MMHelper_MultBlocks,
@@ -310,7 +311,7 @@ const Mat MTMatMul(const Mat& matA, const Mat& matB) {
             tp.Add(f);
         }
         /* Process remainings at the end of the row, width < blockX */
-        std::function<void()>* f = new std::function<void()>[2];
+        std::shared_ptr<std::function<void()>[]> f(new std::function<void()>[2]());
         f[0] = std::move(HWLocalThreadPool<>::WrapFunc(MMHelper_MultBlocks,
             matData, matB.width - colC, blockY, rowC, colC, matA, matB, matBT));
         f[1] = std::move([]() {});
@@ -320,16 +321,16 @@ const Mat MTMatMul(const Mat& matA, const Mat& matB) {
     /* Process last row, height < blockY, col+=blockX */
     int colC = 0;
     for (; colC < matB.width - blockX; colC += blockX) {
-        std::function<void()>* f = new std::function<void()>[2];
-        f[0] = std::move(HWLocalThreadPool<>::WrapFunc(MMHelper_MultBlocks,
-            matData, subX, matA.height - rowC, rowC, colC, matA, matB, matBT));
-        f[1] = std::move(HWLocalThreadPool<>::WrapFunc(MMHelper_MultBlocks,
-            matData, subX, matA.height - rowC, rowC, colC + subX, matA, matB, matBT));
+        std::shared_ptr<std::function<void()>[]> f(new std::function<void()>[2]());
+        f[0] = HWLocalThreadPool<>::WrapFunc(MMHelper_MultBlocks,
+            matData, subX, matA.height - rowC, rowC, colC, matA, matB, matBT);
+        f[1] = HWLocalThreadPool<>::WrapFunc(MMHelper_MultBlocks,
+            matData, subX, matA.height - rowC, rowC, colC + subX, matA, matB, matBT);
         tp.Add(f);
     }
 
     /* Process bottom right block, h < bY, w < bX */
-    std::function<void()>* f = new std::function<void()>[2];
+    std::shared_ptr<std::function<void()>[]> f(new std::function<void()>[2]());
     f[0] = std::move(HWLocalThreadPool<>::WrapFunc(MMHelper_MultBlocks,
         matData, matB.width - colC, matA.height - rowC, rowC, colC, matA, matB, matBT));
     f[1] = std::move([]() {});
@@ -337,6 +338,7 @@ const Mat MTMatMul(const Mat& matA, const Mat& matB) {
 
     std::cout << "Queued!\n";
     tp.Close();
+    free(matBT.mat);
     std::cout << "Done!\n";
 
     return matC;
@@ -344,26 +346,36 @@ const Mat MTMatMul(const Mat& matA, const Mat& matB) {
 
 int __cdecl main(int argc, char *argv[])
 {
-    if (argc < 4)
-    {
-    std::cout << "No args\n";
-    return 0;
-    }
+    //if (argc < 4)
+    //{
+    //std::cout << "No args\n";
+    //return 0;
+    //}
 
-    const char * inputMtxAFile = argv[1];
-    const char * inputMtxBFile = argv[2];
-    const char * outMtxABFile = argv[3];
+    //const char * inputMtxAFile = argv[1];
+    //const char * inputMtxBFile = argv[2];
+    //const char * outMtxABFile = argv[3];
 
-    //const char * inputMtxAFile = "matrixA.bin";
-    //const char * inputMtxBFile = "matrixB.bin";
-    //const char * outMtxABFile = "matrixAB-out.bin";
+    const char * inputMtxAFile = "matrixA.bin";
+    const char * inputMtxBFile = "matrixB.bin";
+    const char * outMtxABFile = "matrixAB-out.bin";
 
     const Mat inputMtxA = LoadMat(inputMtxAFile);
     const Mat inputMtxB = LoadMat(inputMtxBFile);
 
     const Mat outMtxAB = MTMatMul(inputMtxA, inputMtxB);
 
-    DumpMat(outMtxABFile, outMtxAB);
+    //DumpMat(outMtxABFile, outMtxAB);
+
+    const Mat outMtxAB2 = MTMatMul(inputMtxA, inputMtxB);
+
+    while (1) {
+        std::cout << " ";
+    }
+
+
+
+
 
     return 0;
 }

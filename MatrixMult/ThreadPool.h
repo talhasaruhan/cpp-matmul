@@ -238,6 +238,8 @@ public:
         else
             m_numCoreHandlers = NumOfCoresToUse;
 
+        /* malloc m_coreHandlers s.t no default initialization takes place, 
+        we construct every object with placement new */
         m_coreHandlers = (CoreHandler*)malloc(m_numCoreHandlers * sizeof(CoreHandler));
         m_coreHandlerThreads = new std::thread[m_numCoreHandlers];
 
@@ -258,7 +260,7 @@ public:
             Close();
     }
 
-    void Add(std::function<void()>* F) {
+    void Add(std::shared_ptr<std::function<void()>[]> F) {
         m_queue.Push(F);
         m_queueToCoreNotifier.notify_one();
     }
@@ -278,6 +280,10 @@ public:
                 m_coreHandlerThreads[i].join();
         }
 
+        /* free doesn't call the destructor, so  */
+        for (int i = 0; i < m_numCoreHandlers; ++i) {
+            m_coreHandlers[i].~CoreHandler();
+        }
         free(m_coreHandlers);
         delete[] m_coreHandlerThreads;
     }
@@ -308,13 +314,13 @@ protected:
 
         void Push(T const& element) {
             std::unique_lock<std::mutex> lock(m_mutex);
-            m_queue.push(element);
+            m_queue.push(std::move(element));
         }
 
         bool Pop(T& function) {
             std::unique_lock<std::mutex> lock(m_mutex);
             if (!m_queue.empty()) {
-                function = m_queue.front();
+                function = std::move(m_queue.front());
                 m_queue.pop();
                 return true;
             }
@@ -336,8 +342,6 @@ protected:
         CoreHandler(HWLocalThreadPool* const _parent, const unsigned _id, const ULONG_PTR& _processorMask) :
             m_parent(_parent), m_id(_id), m_processorAffinityMask(_processorMask), m_terminate(false), m_numChildThreads(NumThreadsPerCore - 1)
         {
-            m_job = new std::function<void()>[NumThreadsPerCore];
-
             if (m_numChildThreads > 0) {
                 m_childThreads = new std::thread[m_numChildThreads];
                 m_childThreadOnline = new bool[m_numChildThreads];
@@ -385,7 +389,6 @@ protected:
 
             delete[] m_childThreads;
             delete[] m_childThreadOnline;
-            delete[] m_job;
         }
 
         void operator()() {
@@ -406,9 +409,10 @@ protected:
                     dequeued = m_parent->m_queue.Pop(m_job);
                 }
                 if (dequeued) {
+                    m_ownJob = std::move(m_job[0]);
                     if (m_numChildThreads < 1) {
                         //std::cout << "Core " << m_id << ", started executing\n";
-                        m_job[0]();
+                        m_ownJob();
                     }
                     else {
                         {
@@ -420,7 +424,7 @@ protected:
                         }
 
                         //std::cout << "Run on the CoreHandler\n";
-                        m_job[0]();
+                        m_ownJob();
 
                         WaitForChildThreads();
                     }
@@ -448,7 +452,7 @@ protected:
                             m_parent->m_coreToThreadNotifier.wait(lock);
                         }
                     }
-                    func = m_parent->m_job[m_jobSlot];
+                    func = std::move(m_parent->m_job[m_jobSlot]);
                     bool online = 0;
                     {
                         online = m_parent->m_childThreadOnline[m_id];
@@ -478,10 +482,10 @@ protected:
 
         std::thread* m_childThreads;
         bool* m_childThreadOnline;
-        //std::array<std::atomic<int>, NumChildThreads> m_childThreadOnline;
         bool m_terminate;
 
-        std::function<void()>* m_job;
+        std::shared_ptr<std::function<void()>[]> m_job;
+        std::function<void()> m_ownJob;
 
         //std::mutex m_coreMutex;
         std::mutex m_threadMutex;
@@ -493,7 +497,7 @@ protected:
     CoreHandler* m_coreHandlers;
     std::thread* m_coreHandlerThreads;
 
-    Queue<std::function<void()>*> m_queue;
+    Queue<std::shared_ptr<std::function<void()>[]>> m_queue;
 
 
     bool m_terminate, m_waitToFinish;
