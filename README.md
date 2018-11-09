@@ -106,11 +106,12 @@ Benchmark | Numpy(MKL)    | Eigen          | This impl. (ST_TransposedBMatMul) |
 
 
 My multithreaded implementation is only 2.1 times slower than a
-professional BLAS package (18.9 seconds vs 8.9 seconds) and is even slightly faster than the Eigen library. If I’d
-implemented Strassen’s algorithm, assuming same constants, the program
-would run (10^4)^(3-2.8) = 6.3 times faster. Obviously
-Strassen’s constant is perceptibly larger, but I think it’s safe to
-assume it would improve the overall performance to a level more comparable with numpy.
+professional BLAS package (18.9 seconds vs 8.9 seconds) and is even slightly faster than the Eigen library. 
+
+If I had implemented Strassen’s algorithm, for the 10K case, we could naively expect the program
+to run (10^4)^(3-2.8) = 6.3 times faster. Obviously
+Strassen’s constant for big O notation is much larger, so in real life the performance benefit would likely to be far less than that. But at the end, I think it’s safe to
+assume that Strassen's would still improve the overall performance to a level more comparable with numpy for larger matrices (>10K?).
 
 # Code details:
 
