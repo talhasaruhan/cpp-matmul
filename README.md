@@ -133,7 +133,7 @@ function, even algorithm wise naïve ones. For more details, each
 function has a block of comment that explains how it’s designed and why
 so.
 
-## Multithreading utilities ([ThreadPool.h)](https://github.com/talhasaruhan/cpp-matmul/blob/master/MatrixMult/ThreadPool.h))
+## Multithreading utilities ([ThreadPool.h](https://github.com/talhasaruhan/cpp-matmul/blob/master/MatrixMult/ThreadPool.h))
 
 ``` c++
 Namespace QueryHWCores,
