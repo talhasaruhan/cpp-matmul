@@ -48,7 +48,7 @@ Benchmark | Numpy(**MKL**)    | Eigen   | Eigen (**MKL+TBB**) | This impl. (**ST
 
 
 My multithreaded implementation is only about **~2.5 times slower** than a
-professional **BLAS** package and is even **slightly faster than the Eigen library without MKL**. Of course Eigen is a much more complex library and there might be an overhead associated with it. But in the end, the fact that even a popular library like Eigen performs only as good as my implementation when it's not built with MKL+TBB shows that **you can only get to a certain point without using a BLAS package.**
+professional **BLAS** package and is even **slightly faster than the Eigen library without MKL**. Of course Eigen is a much more complex library and there might be an overhead associated with it. But in the end, the fact that even a popular library like Eigen performs only as good as my implementation when it's not built with MKL+TBB shows that BLAS packages are on another level. However that doesn't mean we can't try to catch them in performance.
 
 If I had implemented Strassen’s algorithm, for the 10K case, we could naively expect the program
 to run (10^4)^(3-2.8) = 6.3 times faster. Obviously
