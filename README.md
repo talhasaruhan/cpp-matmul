@@ -1,5 +1,7 @@
 # Project
 
+[See CHANGELOG](#changelog)
+
 In this project, I’ve implemented multiple methods for multiplying
 matrices, and relevant utilities. My prime focuses were:
 
@@ -116,3 +118,27 @@ core, each handling half of the block.
 
   - Language: /std:c++17 (for several “if constexpr”s. otherwise can be
     compiled with C++ 11)
+    
+# Changelog
+
+**Note:** Debugging builds will have arguments pre-set on the MatrixMul.cpp, you can ignore or revert those to accept argument from command line.
+
+* 09/11/2018
+* Fixed memory leaks
+
+![no_leaks_f](https://user-images.githubusercontent.com/15991519/48237828-96127300-e3d9-11e8-9596-10e03797fc43.PNG)
+(This is  the heap profile of the program after running C = AB, as can be seen here, all the previously leaked mess is now cleaned up nicely. Note: int[] is the CPU core to logical processor map,)
+
+* Properly called destructors where CoreHandler objects are created using placement new into a malloc'ed buffer.
+* Freed BT.mat (transpose of B) in the methods that use it to convert the problem into row-row dot product.
+* ~~Changed Add function s.t it accepts std::shared_ptr<std::function<void()>[]>, this is only temporary.~~
+* **Changed the Add() semantics**, now Add function accepts a std::vector<std::function<void()>>. Preferred way of using Add() function now is with initializer lists:
+
+```
+tp.Add({
+    HWLocalThreadPool<>::WrapFunc(MMHelper_MultBlocks,
+        matData, subX, matA.height - rowC, rowC, colC, matA, matB, matBT) ,
+    HWLocalThreadPool<>::WrapFunc(MMHelper_MultBlocks,
+        matData, subX, matA.height - rowC, rowC, colC + subX, matA, matB, matBT)
+});
+```
