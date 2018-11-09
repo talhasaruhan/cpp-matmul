@@ -34,7 +34,7 @@ library.
 * Eigen library (with all the compiler optimizations turned on)
 
 All benchmarks are for multiplying two 10,000 X 10,000 matrices.
-Here are the benchmarks in a couple of lines, the full source code for each test can be found under Benchmark folder
+Here are the benchmarks in a couple of lines, the full source code for tests can be found under Benchmark folder
 
 ### Numpy with C++/MKL backend
 ```
@@ -50,8 +50,12 @@ Setup:
 ```
     MatrixXd matA = MatrixXd::Random(10000, 10000);
     MatrixXd matB = MatrixXd::Random(10000, 10000);
-
-    setNbThreads(12);
+    
+    /* I found that 12 threads to work best (tried 4, 8, 12, 16), 
+    which is expected as any less and cpu resources will be free, 
+    any more and threads will compete with each other for no reason. */
+    
+    setNbThreads(12); 
     
     auto start = std::chrono::high_resolution_clock::now();
     MatrixXd matC = matA * matB;
@@ -98,8 +102,7 @@ professional BLAS package (18.9 seconds vs 8.9 seconds) and is even slightly fas
 implemented Strassen’s algorithm, assuming same constants, the program
 would run (10^4)^(3-2.8) = 6.3 times faster. Obviously
 Strassen’s constant is perceptibly larger, but I think it’s safe to
-assume it would improve the overall performance to a more comparable
-level with numpy.
+assume it would improve the overall performance to a level more comparable with numpy.
 
 # Code details:
 
