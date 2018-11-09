@@ -260,7 +260,7 @@ public:
             Close();
     }
 
-    void Add(std::vector<std::function<void()>> F) {
+    void Add(std::vector<std::function<void()>> const& F) {
         m_queue.Push(F);
         m_queueToCoreNotifier.notify_one();
     }
