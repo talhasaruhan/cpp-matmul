@@ -4,14 +4,17 @@
 #include <chrono>
 #include <random>
 #include <sstream>
+
+#define EIGEN_USE_MKL_ALL
 #include <Eigen\Dense>
 
 using namespace std;
 using namespace Eigen;
 
+
 int main() {
 
-    const unsigned n = 1000;
+    const unsigned n = 10000;
 
     MatrixXd matA = MatrixXd::Random(n, n);
     MatrixXd matB = MatrixXd::Random(n, n);
