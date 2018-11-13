@@ -17,10 +17,11 @@ float VecSumIntrinsicNaiveLoop(const float* const __restrict  c, const unsigned 
     for (int i = 0; i<8; ++i) vsum[i] = 0;
 
     __m256 sum = _mm256_setzero_ps();
+    __m256 x0, x1;
 
     for (int i = 0; i<N; i += 16) {
-        __m256 x0 = _mm256_load_ps(&c[i]);
-        __m256 x1 = _mm256_load_ps(&c[i + 8]);
+        x0 = _mm256_load_ps(&c[i]);
+        x1 = _mm256_load_ps(&c[i + 8]);
         x0 = _mm256_add_ps(x0, x1);
         sum = _mm256_add_ps(sum, x0);
     }
@@ -47,23 +48,25 @@ float VecSumIntrinsicExplicit1(const float* const __restrict c, const unsigned N
     /* this will probably be written on stack by the compiler as we use all 16 registers */
     __m256 sum = _mm256_setzero_ps();
 
+    __m256 c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16;
+
     for (int i = 0; i<N; i += 128) {
-        __m256 c1 = _mm256_load_ps(&c[i + 0]);
-        __m256 c2 = _mm256_load_ps(&c[i + 8]);
-        __m256 c3 = _mm256_load_ps(&c[i + 16]);
-        __m256 c4 = _mm256_load_ps(&c[i + 24]);
-        __m256 c5 = _mm256_load_ps(&c[i + 32]);
-        __m256 c6 = _mm256_load_ps(&c[i + 40]);
-        __m256 c7 = _mm256_load_ps(&c[i + 48]);
-        __m256 c8 = _mm256_load_ps(&c[i + 56]);
-        __m256 c9 = _mm256_load_ps(&c[i + 64]);
-        __m256 c10 = _mm256_load_ps(&c[i + 72]);
-        __m256 c11 = _mm256_load_ps(&c[i + 80]);
-        __m256 c12 = _mm256_load_ps(&c[i + 88]);
-        __m256 c13 = _mm256_load_ps(&c[i + 96]);
-        __m256 c14 = _mm256_load_ps(&c[i + 104]);
-        __m256 c15 = _mm256_load_ps(&c[i + 112]);
-        __m256 c16 = _mm256_load_ps(&c[i + 120]);
+        c1 = _mm256_load_ps(&c[i + 0]);
+        c2 = _mm256_load_ps(&c[i + 8]);
+        c3 = _mm256_load_ps(&c[i + 16]);
+        c4 = _mm256_load_ps(&c[i + 24]);
+        c5 = _mm256_load_ps(&c[i + 32]);
+        c6 = _mm256_load_ps(&c[i + 40]);
+        c7 = _mm256_load_ps(&c[i + 48]);
+        c8 = _mm256_load_ps(&c[i + 56]);
+        c9 = _mm256_load_ps(&c[i + 64]);
+        c10 = _mm256_load_ps(&c[i + 72]);
+        c11 = _mm256_load_ps(&c[i + 80]);
+        c12 = _mm256_load_ps(&c[i + 88]);
+        c13 = _mm256_load_ps(&c[i + 96]);
+        c14 = _mm256_load_ps(&c[i + 104]);
+        c15 = _mm256_load_ps(&c[i + 112]);
+        c16 = _mm256_load_ps(&c[i + 120]);
 
         c1 = _mm256_add_ps(c1, c2);
         c3 = _mm256_add_ps(c3, c4);
@@ -245,24 +248,26 @@ float VecSumIntrinsicExplicit3(const float* const __restrict c, const unsigned N
 /* just an idea, sum the vec as if you'd sum nodes in a binary tree, bottom up, not expected to work well */
 float VecSumIntrinsicBinary(float* const c, const unsigned N, const unsigned K)
 {
+    __m256 c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16;
+
     for (int k = 0; k <= K - 7; ++k) {
         for (int i = 0; i<N / (1 << k); i += 128) {
-            __m256 c1 = _mm256_load_ps(&c[i + 0]);
-            __m256 c2 = _mm256_load_ps(&c[i + 8]);
-            __m256 c3 = _mm256_load_ps(&c[i + 16]);
-            __m256 c4 = _mm256_load_ps(&c[i + 24]);
-            __m256 c5 = _mm256_load_ps(&c[i + 32]);
-            __m256 c6 = _mm256_load_ps(&c[i + 40]);
-            __m256 c7 = _mm256_load_ps(&c[i + 48]);
-            __m256 c8 = _mm256_load_ps(&c[i + 56]);
-            __m256 c9 = _mm256_load_ps(&c[i + 64]);
-            __m256 c10 = _mm256_load_ps(&c[i + 72]);
-            __m256 c11 = _mm256_load_ps(&c[i + 80]);
-            __m256 c12 = _mm256_load_ps(&c[i + 88]);
-            __m256 c13 = _mm256_load_ps(&c[i + 96]);
-            __m256 c14 = _mm256_load_ps(&c[i + 104]);
-            __m256 c15 = _mm256_load_ps(&c[i + 112]);
-            __m256 c16 = _mm256_load_ps(&c[i + 120]);
+            c1 = _mm256_load_ps(&c[i + 0]);
+            c2 = _mm256_load_ps(&c[i + 8]);
+            c3 = _mm256_load_ps(&c[i + 16]);
+            c4 = _mm256_load_ps(&c[i + 24]);
+            c5 = _mm256_load_ps(&c[i + 32]);
+            c6 = _mm256_load_ps(&c[i + 40]);
+            c7 = _mm256_load_ps(&c[i + 48]);
+            c8 = _mm256_load_ps(&c[i + 56]);
+            c9 = _mm256_load_ps(&c[i + 64]);
+            c10 = _mm256_load_ps(&c[i + 72]);
+            c11 = _mm256_load_ps(&c[i + 80]);
+            c12 = _mm256_load_ps(&c[i + 88]);
+            c13 = _mm256_load_ps(&c[i + 96]);
+            c14 = _mm256_load_ps(&c[i + 104]);
+            c15 = _mm256_load_ps(&c[i + 112]);
+            c16 = _mm256_load_ps(&c[i + 120]);
 
             c1 = _mm256_add_ps(c1, c2);
             c2 = _mm256_add_ps(c3, c4);
@@ -322,7 +327,7 @@ float VecSumScalarBinary(float* c, const unsigned N, const unsigned K) {
 }
 
 void ILPSum() {
-    const unsigned Ts = 1, T = 10000;
+    const unsigned Ts = 1, T = 1000;
     const unsigned K = 20;
     const unsigned N = 1 << K;
 

@@ -18,7 +18,10 @@
     <ClCompile Include="EigenBenchmark.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="IntrinsicBenchmarks.cpp">
+    <ClCompile Include="IntrinsicSumBenchmarks.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="IntrinASMDotBenchmark.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
