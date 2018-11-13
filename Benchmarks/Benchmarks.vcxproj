@@ -92,6 +92,7 @@
       <OpenMPSupport>true</OpenMPSupport>
       <AdditionalOptions> /DMKL_ILP64 -I"%MKLROOT%"\include %(AdditionalOptions)</AdditionalOptions>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <OmitFramePointers>true</OmitFramePointers>
     </ClCompile>
     <Link>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
@@ -99,6 +100,7 @@
       <AdditionalDependencies>mkl_intel_ilp64.lib; mkl_tbb_thread.lib; mkl_core.lib; tbb.lib</AdditionalDependencies>
       <AdditionalLibraryDirectories>C:\Program Files (x86)\IntelSWTools\compilers_and_libraries_2019.0.117\windows\mkl\lib\intel64_win;C:\Program Files (x86)\IntelSWTools\compilers_and_libraries_2019\windows\tbb\lib\intel64_win\vc14_uwp</AdditionalLibraryDirectories>
       <AdditionalOptions> /DMKL_ILP64 -I"%MKLROOT%"\include %(AdditionalOptions)</AdditionalOptions>
+      <SubSystem>Console</SubSystem>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
@@ -133,6 +135,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="EigenBenchmark.cpp" />
+    <ClCompile Include="IntrinsicBenchmarks.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

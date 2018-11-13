@@ -10,9 +10,15 @@
 #include <cstdio>
 #include <memory>
 #include <thread>
+#include <xmmintrin.h>
+#include <emmintrin.h>
+#include <immintrin.h>
 #include "ThreadPool.h"
 
 #define NOMINMAX
+
+#define AVX_ALIGN 32
+#define SSE_ALIGN 16
 
 typedef struct Mat
 {
@@ -23,7 +29,7 @@ typedef struct Mat
 } Mat;
 
 void FreeMat(const Mat &mat) {
-    free(mat.mat);
+    _aligned_free(mat.mat);
 }
 
 const Mat LoadMat(const char * const filename) {
@@ -41,7 +47,7 @@ const Mat LoadMat(const char * const filename) {
     in.read((char*)&mat, 3 * sizeof(uint32_t));
     in.read((char*)&matSize, sizeof(uint32_t));
     in.seekg(12 * sizeof(uint32_t), std::ios::cur);
-    mat.mat = (float*)malloc(matSize);
+    mat.mat = (float*)_aligned_malloc(matSize, AVX_ALIGN);
     in.read((char*)mat.mat, matSize);
 
     in.close();
@@ -71,12 +77,11 @@ static unsigned RoundUpPwr2(unsigned val, unsigned pwr2)
 }
 
 /* Single threaded, should I multithread this as well?
-__declspec(noalias)
 Honestly, I don't think it will have any significant effect. n^2 vs n^3 */
 __declspec(noalias)
 const Mat TransposeMat(const Mat &mat) {
     const unsigned tRowSpan = RoundUpPwr2(mat.height, 64 / sizeof(float));
-    float * __restrict const tData = (float*)malloc(mat.width*tRowSpan * sizeof(float));
+    float * __restrict const tData = (float*)_aligned_malloc(mat.width*tRowSpan * sizeof(float), AVX_ALIGN);
 
     Mat T{
         mat.height,
@@ -110,7 +115,7 @@ const Mat ST_NaiveMatMul(const Mat& matA, const Mat& matB) {
     * First : naive solution with but with some tricks to make compiler (MVC) behave
     * Note that, in this case, manually unrolling the loop helps as the compiler can't auto-vectorize non-contagious memory access
     */
-    float * __restrict const matData = (float*)malloc(matA.height * matB.rowSpan * sizeof(float));
+    float * __restrict const matData = (float*)_aligned_malloc(matA.height * matB.rowSpan * sizeof(float), AVX_ALIGN);
 
     Mat matC{
         matB.width,
@@ -147,7 +152,7 @@ const Mat ST_TransposedBMatMul(const Mat& matA, const Mat& matB) {
     * Also, note that, if we manually unrolled the loop here, compiler wouldn't vectorize the loop for some reason
     * (1301: Loop stride is not +1.) is the exact compiler message.
     */
-    float * __restrict const matData = (float*)malloc(matA.height * matB.rowSpan * sizeof(float));
+    float * __restrict const matData = (float*)_aligned_malloc(matA.height * matB.rowSpan * sizeof(float), AVX_ALIGN);
 
     Mat matC{
         matB.width,
@@ -169,7 +174,7 @@ const Mat ST_TransposedBMatMul(const Mat& matA, const Mat& matB) {
         }
     }
 
-    free(matBT.mat);
+    _aligned_free(matBT.mat);
 
     return matC;
 }
@@ -187,7 +192,7 @@ const Mat ST_BlockMult(const Mat& matA, const Mat& matB) {
     * Notice that I had to assign almost everything to temporary constants,
     * because otherwise MSVC can't guarantee the loop is not self dependent.
     */
-    float * __restrict const matData = (float*)malloc(matA.height * matB.rowSpan * sizeof(float));
+    float * __restrict const matData = (float*)_aligned_malloc(matA.height * matB.rowSpan * sizeof(float), AVX_ALIGN);
 
     Mat matC{
         matB.width,
@@ -239,13 +244,14 @@ const Mat ST_BlockMult(const Mat& matA, const Mat& matB) {
         }
     }
 
-    free(matBT.mat);
+    _aligned_free(matBT.mat);
     
     return matC;
 }
 
+/* Previous pure C++ implementation */
 __declspec(noalias)
-void MMHelper_MultBlocks(float* __restrict const matData, const unsigned blockX, const unsigned blockY,
+void MMHelper_MultBlocks__AutoVec(float* __restrict const matData, const unsigned blockX, const unsigned blockY,
     const unsigned rowC, const unsigned colC,
     const Mat& matA, const Mat& matB, const Mat& matBT)
 {
@@ -266,6 +272,341 @@ void MMHelper_MultBlocks(float* __restrict const matData, const unsigned blockX,
 }
 
 /*
+* A naive loop where we load a, b multiply then sum vertically into vsum. 
+* then ve horizontally sum vsum to get the final dot product.
+*
+* Can we do better? Of course! most of these instructions have really latecy/throughput ratio.
+* we can issue multiple (non-blocking) commands at once.
+*
+* These are very specific to the actual hardware. 
+* So I'm just using going to try tune this to my own hardware specifications.
+*
+* on my hardware:
+* _mm256_load_ps, latency:1, tp:0.25
+* _mm256_mul_ps, latency:4, tp:0.5
+* _mm256_add_ps, latency:4, tp:0.5
+*
+* A naive loop with singular a, b loads and accumulation will yield an asm like this:
+* 1: load a1, b1,
+* 4: a1 <- mul(a1, b1)
+* 5:  4: vsum <- add(vsum, a1),
+*       1: load a2, b2
+*       4: a2 <- mul(a2, b2)
+* 5:  4: vsum <- add(vsum, a2),
+*       1: load a3, b3
+*       4: a3 <- mul(a3, b3)
+* 5:  4: vsum <- add(vsum, a3),
+*       1: load a4, b4
+*       4: a4 <- mul(a4, b4)
+* ...
+* 4: vsum <- add(vsum, a4)
+*
+* This looks wasteful, as almost every op is dependent on the previous ones.* 
+* We should be able to do better by rearranging these intrinsics, and take advantage of Intruction Level Parallelism.
+*
+* Below are some of the ideas I came up with. 
+* For now, to test a function I simply rename it. Maybe I'll find a automated compile time soln. to this.
+*
+*/
+
+/* naive loop */
+__declspec(noalias)
+void MMHelper_MultBlocks_Intrinsics_1(float* __restrict const matData, const unsigned blockX, const unsigned blockY,
+    const unsigned rowC, const unsigned colC,
+    const Mat& matA, const Mat& matB, const Mat& matBT)
+{
+    __declspec(align(32)) float fps[8];
+
+    for (int blockRow = 0; blockRow < blockY; ++blockRow) {
+        for (int blockCol = 0; blockCol < blockX; ++blockCol) {
+            const unsigned r = rowC + blockRow, c = colC + blockCol;
+            const unsigned matAoffset = r * matA.rowSpan, matBoffset = c * matBT.rowSpan;
+            float accumulate = 0;
+
+            __m256 vsum = _mm256_setzero_ps();
+            __m256 a1, a2, a3, a4, a5, a6, a7, a8, b1, b2, b3, b4, b5, b6, b7, b8;
+
+            /* zero padded, no edge cases */
+            for (int pos = 0; pos < matA.width; pos += 8) {
+                /* load 8f vectors, mul, add then accumulate */
+                a1 = _mm256_load_ps(&matA.mat[matAoffset + pos]);
+                b1 = _mm256_load_ps(&matBT.mat[matBoffset + pos]);
+                a1 = _mm256_mul_ps(a1, b1);
+
+                vsum = _mm256_add_ps(vsum, a1);
+            }
+
+            /* sum 8 floats in the __m256 */
+            _mm256_store_ps(fps, vsum);
+            for (int i = 0; i < 8; ++i) {
+                accumulate += fps[i];
+            }
+
+            matData[r*matB.rowSpan + c] = accumulate;
+        }
+    }
+}
+
+/* load 8x8f from a, and 8x8f from b, all 16 registers are used, at each iteration sum of product of these are calculated.
+Note that as we sum up the vectors, the pipeline gets increasingly sequential as next operations will depend on the current one.
+*/
+__declspec(noalias)
+void MMHelper_MultBlocks_Intrinsics_2(float* __restrict const matData, const unsigned blockX, const unsigned blockY,
+    const unsigned rowC, const unsigned colC,
+    const Mat& matA, const Mat& matB, const Mat& matBT)
+{
+    __declspec(align(32)) float fps[8];
+
+    for (int blockRow = 0; blockRow < blockY; ++blockRow) {
+        for (int blockCol = 0; blockCol < blockX; ++blockCol) {
+            const unsigned r = rowC + blockRow, c = colC + blockCol;
+            const unsigned matAoffset = r * matA.rowSpan, matBoffset = c * matBT.rowSpan;
+            float accumulate = 0;
+
+            /* will be written on stack at every iteration as we use all registers for a,b1:8 */
+            __m256 vsum = _mm256_setzero_ps();
+            __m256 a1, a2, a3, a4, a5, a6, a7, a8, b1, b2, b3, b4, b5, b6, b7, b8;
+
+            int pos = 0;
+            for (; pos < matA.width - 64; pos += 8 * 8) {
+                /* load 8x8f into a1:8 */
+                a1 = _mm256_load_ps(&matA.mat[matAoffset + pos + 0 * 8]);
+                a2 = _mm256_load_ps(&matA.mat[matAoffset + pos + 1 * 8]);
+                a3 = _mm256_load_ps(&matA.mat[matAoffset + pos + 2 * 8]);
+                a4 = _mm256_load_ps(&matA.mat[matAoffset + pos + 3 * 8]);
+                a5 = _mm256_load_ps(&matA.mat[matAoffset + pos + 4 * 8]);
+                a6 = _mm256_load_ps(&matA.mat[matAoffset + pos + 5 * 8]);
+                a7 = _mm256_load_ps(&matA.mat[matAoffset + pos + 6 * 8]);
+                a8 = _mm256_load_ps(&matA.mat[matAoffset + pos + 7 * 8]);
+
+                /* load 8x8f into b1:8 */
+                b1 = _mm256_load_ps(&matBT.mat[matBoffset + pos + 0 * 8]);
+                b2 = _mm256_load_ps(&matBT.mat[matBoffset + pos + 1 * 8]);
+                b3 = _mm256_load_ps(&matBT.mat[matBoffset + pos + 2 * 8]);
+                b4 = _mm256_load_ps(&matBT.mat[matBoffset + pos + 3 * 8]);
+                b5 = _mm256_load_ps(&matBT.mat[matBoffset + pos + 4 * 8]);
+                b6 = _mm256_load_ps(&matBT.mat[matBoffset + pos + 5 * 8]);
+                b7 = _mm256_load_ps(&matBT.mat[matBoffset + pos + 6 * 8]);
+                b8 = _mm256_load_ps(&matBT.mat[matBoffset + pos + 7 * 8]);
+
+                /* 8 independent muls */
+                a1 = _mm256_mul_ps(a1, b1);
+                a2 = _mm256_mul_ps(a2, b2);
+                a3 = _mm256_mul_ps(a3, b3);
+                a4 = _mm256_mul_ps(a4, b4);
+                a5 = _mm256_mul_ps(a5, b5);
+                a6 = _mm256_mul_ps(a6, b6);
+                a7 = _mm256_mul_ps(a7, b7);
+                a8 = _mm256_mul_ps(a8, b8);
+
+                /* 4 independent adds */
+                a1 = _mm256_add_ps(a1, a2);
+                a3 = _mm256_add_ps(a3, a4);
+                a5 = _mm256_add_ps(a5, a6);
+                a7 = _mm256_add_ps(a7, a8);
+
+                /* 2 independent adds */
+                a1 = _mm256_add_ps(a1, a3);
+                a5 = _mm256_add_ps(a5, a7);
+
+                /* 1 add */
+                a1 = _mm256_add_ps(a1, a5);
+
+                /* 1 add, note that compiler will write/read stack as we only have 16 regs */
+                vsum = _mm256_add_ps(vsum, a1);
+            }
+            for (; pos < matA.width; pos += 8 * 2) {
+                a1 = _mm256_load_ps(&matA.mat[matAoffset + pos + 0 * 8]);
+                a2 = _mm256_load_ps(&matA.mat[matAoffset + pos + 1 * 8]);
+
+                b1 = _mm256_load_ps(&matBT.mat[matBoffset + pos + 0 * 8]);
+                b2 = _mm256_load_ps(&matBT.mat[matBoffset + pos + 1 * 8]);
+
+                a1 = _mm256_mul_ps(a1, b1);
+                a2 = _mm256_mul_ps(a2, b2);
+
+                a1 = _mm256_add_ps(a1, a2);
+
+                vsum = _mm256_add_ps(vsum, a1);
+            }
+
+            /* sum 8 floats in the __m256 */
+            _mm256_store_ps(fps, vsum);
+            for (int i = 0; i < 8; ++i) {
+                accumulate += fps[i];
+            }
+
+            matData[r*matB.rowSpan + c] = accumulate;
+        }
+    }
+}
+
+/*
+* 2 4x8f vectors (a1:4, b1:4) are loaded, 
+* Instead of reduce-summing to one vector, we reduce to 4 vectors, meaning that we'll have much less interdependent operations.
+* On the other hand, we're only handling 4 vecs at a time and we're wasting some of the registers.
+*/
+__declspec(noalias)
+void MMHelper_MultBlocks_Intrinsics_3(float* __restrict const matData, const unsigned blockX, const unsigned blockY,
+    const unsigned rowC, const unsigned colC,
+    const Mat& matA, const Mat& matB, const Mat& matBT)
+{
+    __declspec(align(32)) float fps[8*4];
+
+    for (int blockRow = 0; blockRow < blockY; ++blockRow) {
+        for (int blockCol = 0; blockCol < blockX; ++blockCol) {
+            const unsigned r = rowC + blockRow, c = colC + blockCol;
+            const unsigned matAoffset = r * matA.rowSpan, matBoffset = c * matBT.rowSpan;
+            float accumulate = 0;
+
+            __m256 a1, a2, a3, a4, b1, b2, b3, b4;
+            __m256 c1 = _mm256_setzero_ps();
+            __m256 c2 = _mm256_setzero_ps();
+            __m256 c3 = _mm256_setzero_ps();
+            __m256 c4 = _mm256_setzero_ps();
+
+            /* matrices are only guaranteed to have 16f aligned rowspans. */
+            int pos = 0;
+            for (; pos < matA.width - 32; pos += 8 * 4) {
+                /* load 4x8f */
+                a1 = _mm256_load_ps(&matA.mat[matAoffset + pos + 0 * 8]);
+                a2 = _mm256_load_ps(&matA.mat[matAoffset + pos + 1 * 8]);
+                a3 = _mm256_load_ps(&matA.mat[matAoffset + pos + 2 * 8]);
+                a4 = _mm256_load_ps(&matA.mat[matAoffset + pos + 3 * 8]);
+
+                /* load 4x8f */
+                b1 = _mm256_load_ps(&matBT.mat[matBoffset + pos + 0 * 8]);
+                b2 = _mm256_load_ps(&matBT.mat[matBoffset + pos + 1 * 8]);
+                b3 = _mm256_load_ps(&matBT.mat[matBoffset + pos + 2 * 8]);
+                b4 = _mm256_load_ps(&matBT.mat[matBoffset + pos + 3 * 8]);
+
+                /* 4 independent muls */
+                a1 = _mm256_mul_ps(a1, b1);
+                a2 = _mm256_mul_ps(a2, b2);
+                a3 = _mm256_mul_ps(a3, b3);
+                a4 = _mm256_mul_ps(a4, b4);
+
+                /* 4 independent adds */
+                c1 = _mm256_add_ps(c1, a1);
+                c2 = _mm256_add_ps(c2, a2);
+                c3 = _mm256_add_ps(c3, a3);
+                c4 = _mm256_add_ps(c4, a4);
+            }
+            /* handle the remaining */
+            for (; pos < matA.width; pos += 8*2) {
+                a1 = _mm256_load_ps(&matA.mat[matAoffset + pos + 0 * 8]);
+                a2 = _mm256_load_ps(&matA.mat[matAoffset + pos + 1 * 8]);
+
+                b1 = _mm256_load_ps(&matBT.mat[matBoffset + pos + 0 * 8]);
+                b2 = _mm256_load_ps(&matBT.mat[matBoffset + pos + 1 * 8]);
+
+                a1 = _mm256_mul_ps(a1, b1);
+                a2 = _mm256_mul_ps(a2, b2);
+
+                c1 = _mm256_add_ps(c1, a1);
+                c2 = _mm256_add_ps(c2, a2);
+            }
+
+            /* horizontal sum */
+            _mm256_store_ps(&fps[0], c1);
+            _mm256_store_ps(&fps[8], c2);
+            _mm256_store_ps(&fps[16], c3);
+            _mm256_store_ps(&fps[24], c4);
+            for (int i = 0; i < 8*4; ++i) {
+                accumulate += fps[i];
+            }
+
+            matData[r*matB.rowSpan + c] = accumulate;
+        }
+    }
+}
+
+/*
+* This method tries to solve the problems of the last one, by handling 6x8f vecs at a time.
+* This way, we're keeping cycles per iteration low while increasing throughput.
+*/
+__declspec(noalias)
+void MMHelper_MultBlocks(float* __restrict const matData, const unsigned blockX, const unsigned blockY,
+    const unsigned rowC, const unsigned colC,
+    const Mat& matA, const Mat& matB, const Mat& matBT)
+{
+    __declspec(align(32)) float fps[8 * 4];
+
+    for (int blockRow = 0; blockRow < blockY; ++blockRow) {
+        for (int blockCol = 0; blockCol < blockX; ++blockCol) {
+            const unsigned r = rowC + blockRow, c = colC + blockCol;
+            const unsigned matAoffset = r * matA.rowSpan, matBoffset = c * matBT.rowSpan;
+            float accumulate = 0;
+
+            __m256 a1, a2, a3, a4, a5, a6, b1, b2, b3, b4, b5, b6;
+            __m256 c1 = _mm256_setzero_ps();
+            __m256 c2 = _mm256_setzero_ps();
+            __m256 c3 = _mm256_setzero_ps();
+            __m256 c4 = _mm256_setzero_ps();
+
+            int pos = 0;
+            for (; pos < matA.width-48; pos += 8 * 6) {
+                a1 = _mm256_load_ps(&matA.mat[matAoffset + pos + 0 * 8]);
+                a2 = _mm256_load_ps(&matA.mat[matAoffset + pos + 1 * 8]);
+                a3 = _mm256_load_ps(&matA.mat[matAoffset + pos + 2 * 8]);
+                a4 = _mm256_load_ps(&matA.mat[matAoffset + pos + 3 * 8]);
+                a5 = _mm256_load_ps(&matA.mat[matAoffset + pos + 4 * 8]);
+                a6 = _mm256_load_ps(&matA.mat[matAoffset + pos + 5 * 8]);
+
+                b1 = _mm256_load_ps(&matBT.mat[matBoffset + pos + 0 * 8]);
+                b2 = _mm256_load_ps(&matBT.mat[matBoffset + pos + 1 * 8]);
+                b3 = _mm256_load_ps(&matBT.mat[matBoffset + pos + 2 * 8]);
+                b4 = _mm256_load_ps(&matBT.mat[matBoffset + pos + 3 * 8]);
+                b5 = _mm256_load_ps(&matBT.mat[matBoffset + pos + 4 * 8]);
+                b6 = _mm256_load_ps(&matBT.mat[matBoffset + pos + 5 * 8]);
+
+                a1 = _mm256_mul_ps(a1, b1);
+                a2 = _mm256_mul_ps(a2, b2);
+                a3 = _mm256_mul_ps(a3, b3);
+                a4 = _mm256_mul_ps(a4, b4);
+                a5 = _mm256_mul_ps(a5, b5);
+                a6 = _mm256_mul_ps(a6, b6);
+
+                a1 = _mm256_add_ps(a1, a2);
+                a3 = _mm256_add_ps(a3, a4);
+                a5 = _mm256_add_ps(a5, a6);
+
+                c1 = _mm256_add_ps(c1, a1);
+                c2 = _mm256_add_ps(c2, a3);
+                c3 = _mm256_add_ps(c3, a5);
+
+            }
+
+            // zero padded, no edge cases
+            for (; pos < matA.width; pos += 8 * 2) {
+                a1 = _mm256_load_ps(&matA.mat[matAoffset + pos + 0 * 8]);
+                a2 = _mm256_load_ps(&matA.mat[matAoffset + pos + 1 * 8]);
+
+                b1 = _mm256_load_ps(&matBT.mat[matBoffset + pos + 0 * 8]);
+                b2 = _mm256_load_ps(&matBT.mat[matBoffset + pos + 1 * 8]);
+
+                a1 = _mm256_mul_ps(a1, b1);
+                a2 = _mm256_mul_ps(a2, b2);
+
+                c1 = _mm256_add_ps(c1, a1);
+                c2 = _mm256_add_ps(c2, a2);
+            }
+
+            /* sum 8 floats in the __m256, I'm sure I can write this using intrinsics as well */
+            _mm256_store_ps(&fps[0], c1);
+            _mm256_store_ps(&fps[8], c2);
+            _mm256_store_ps(&fps[16], c3);
+            for (int i = 0; i < 8 * 3; ++i) {
+                accumulate += fps[i];
+            }
+
+            matData[r*matB.rowSpan + c] = accumulate;
+        }
+    }
+}
+
+
+/*
 * You will notice some of the loops are manually unrolled and some are kept as one liners
 * To ensure use of packed floating operations (SSE/AVX), we need to write the write loops in very specific ways,
 * While in some cases, manually unrolling the loop helps (usually when compiler can't do it itself), 
@@ -283,10 +624,8 @@ const Mat MTMatMul(const Mat& matA, const Mat& matB) {
     * I will use a thread-couple pool to process blocks.
     * Read HWLocalThreadPool.h for more details.
     */
-
-    /* First, we need to query Win32 API to lookup the mapping between logical processors and physical cores. */
-
-    float * __restrict const matData = (float*)malloc(matA.height * matB.rowSpan * sizeof(float));
+    
+    float * __restrict const matData = (float*)_aligned_malloc(matA.height * matB.rowSpan * sizeof(float), AVX_ALIGN);
 
     Mat matC{
         matB.width,
@@ -294,8 +633,6 @@ const Mat MTMatMul(const Mat& matA, const Mat& matB) {
         matB.rowSpan,
         matData
     };
-
-    //printf("%d %d\n", matB.width, matB.rowSpan);
 
     const unsigned blockX = 32, blockY = 32;
     const unsigned subX = blockX >> 1;
@@ -343,20 +680,21 @@ const Mat MTMatMul(const Mat& matA, const Mat& matB) {
             []() {}
         });
 
-    std::cout << "Queued!\n";
     tp.Close();
-    free(matBT.mat);
-    std::cout << "Done!\n";
+    _aligned_free(matBT.mat);
 
     return matC;
 }
 
-/* A very, very simple toggle between two functions depending on the total number of ops */
+/* 
+* EDIT: --NEEDS MORE TUNING--
+* A very, very simple toggle between two functions depending on the total number of ops 
+*/
 const Mat MatMul(const Mat& matA, const Mat& matB) {
     /* A:  a,b B: b,c => # of op: a*b*b*c */
-    if (matA.height*matA.width*matA.width*matB.width < 125000000) {
-        return ST_TransposedBMatMul(matA, matB);
-    }
+    //if (matA.height*matA.width*matA.width*matB.width < 125000000) {
+    //    return ST_TransposedBMatMul(matA, matB);
+    //}
     return MTMatMul(matA, matB);
 }
 
@@ -381,11 +719,12 @@ int __cdecl main(int argc, char *argv[])
 
     auto start = std::chrono::high_resolution_clock::now();
 
-    const Mat outMtxAB = MatMul(inputMtxA, inputMtxB);
+    const Mat outMtxAB = MTMatMul(inputMtxA, inputMtxB);
 
     auto end = std::chrono::high_resolution_clock::now();
 
     std::cout << "Matrix Multiplication: " << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() << " microseconds.\n";
+    //std::cout << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
     
     DumpMat(outMtxABFile, outMtxAB);
 
