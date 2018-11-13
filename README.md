@@ -200,3 +200,7 @@ tp.Add({
 ```
 * Added Eigen benchmarks
 * Implemented MatMul which should be the general function exposed to outside. It simply selects betwen *MTMatMul* and *ST_TransposedBMatMul* depending on the sizes of the matrices. Current impl.: ```A.height*A.width*A.width*B.width < K : ST_TransposedBMatMul o.w : MTMatMul```
+
+### 13/11/2018
+* Added a couple of vector sum implementations in benchmark project to compare different intrinsic approaches. The aim is to achieve maximum throughput with ILP minded design. However compiler doesn't seem to respect the coder as it optimizes away different ways in which I try to maximize the throughput for my own specific CPU architecture.
+* Added a few MMHelper_MultBlocks implementations using intrinsics these are directly parallel to the vector sum implementations described above.
