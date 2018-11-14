@@ -170,9 +170,8 @@ core, each handling half of the block.
     compiled with C++ 11)
 
 # What's next?
-* Still a factor of 2.5-3 to achieve MKL performance.
-* Use \_\_restrict keyword to guarantee C doesn't alias with A or B.
-* Use SSE/AVX intrinsics to manually optimize the code.
+* Still a factor of 2 to achieve MKL performance.
+* Currently gettin about 15% speed improvement over auto vectorization or naive use of intrinsics. But still, arithmetic intensity (FLOP / memory access) can be improved.
 
 # Changelog
 
@@ -202,5 +201,9 @@ tp.Add({
 * Implemented MatMul which should be the general function exposed to outside. It simply selects betwen *MTMatMul* and *ST_TransposedBMatMul* depending on the sizes of the matrices. Current impl.: ```A.height*A.width*A.width*B.width < K : ST_TransposedBMatMul o.w : MTMatMul```
 
 ### 13/11/2018
-* Added a couple of vector sum implementations in benchmark project to compare different intrinsic approaches. The aim is to achieve maximum throughput with ILP minded design. However compiler doesn't seem to respect the coder as it optimizes away different ways in which I try to maximize the throughput for my own specific CPU architecture.
-* Added a few MMHelper_MultBlocks implementations using intrinsics these are directly parallel to the vector sum implementations described above.
+* Added a couple of vector sum implementations in benchmark project to compare different intrinsic approaches. The aim is to achieve maximum throughput with ILP minded design. However compiler optimizes away different ways in which I try to maximize the throughput for my own specific CPU architecture.
+* In order to address this issue, I wrote another benchmark with inline assembly and compiled it with GCC (as MSVC doesn't support inline assembly in x64 architecture). First of all, I tested GCC's behaviour with intrinsics and found it to be same as MSVC's for our purposes. Having shown that, I've written volatile inline assembly to force compiler to use my implementation. The tests showed that the compiler optimized the intrinsics to almost the same level when the optimizations are enabled. But compiler optimized versions, and my ASM code, is still not fast enough to compete with BLAS packages. So I'm doing something wrong in the first place and writing ASM is not the answer.
+* Benchmarked auto vectorization, naive intrinsics and other 2 intrinsic based block multiplication implementations, last 2 methods are about 15% faster than naive intrinsics and auto vectorized code. But arithmetic intensity (FLOPs / memory accesses) is still quite low.
+* Started analyzing the bottlenecks further using Intel's VTune and Advisor. It now became apparent that while I was getting similar results from different approaches, each had different bottlenecks which at first I couldn't see. So with this detailed information I should be able to address those bottlenecks.
+* Added another intrinsic based block multiplication method, changed a few implementations to use FMA intructions rather than seperate multiply-adds, to achieve higher throughput.
+* When profiling my program I noticed that small block sizes that can fit into L2 cache yielded a lot of L3 misses and for large blocks that utilized L3 well and cut down the DRAM fetches, the block multiplication ran into L2 misses. So applying the idea that led to blocking to begin with, I eill implemenent one more level of blocking to better utilize multiple layers of cache.
