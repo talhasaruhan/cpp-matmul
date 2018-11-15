@@ -182,7 +182,9 @@ core, each handling half of the block.
 ### 09/11/2018
 * **Fixed memory leaks!**
 
+<details><summary><b>Screenshot of memory usage analysis</b></summary>
 ![no_leaks_f2](https://user-images.githubusercontent.com/15991519/48242727-a0d70300-e3ed-11e8-80e9-01954f2ec6b9.PNG)
+</details>
 
 (This is  the heap profile of the program after running C1 = AB, freeing C1, then running C2=AB and freeing C2. As can be seen here, all the previously leaked mess (packed tasks, function pointers, CoreHandler member arrays etc. ) is now cleaned up nicely. Note: int[] is the static CPU core to logical processor map,)
 
@@ -203,9 +205,21 @@ tp.Add({
 * Implemented MatMul which should be the general function exposed to outside. It simply selects betwen *MTMatMul* and *ST_TransposedBMatMul* depending on the sizes of the matrices. Current impl.: ```A.height*A.width*A.width*B.width < K : ST_TransposedBMatMul o.w : MTMatMul```
 
 ### 13/11/2018
+<details><summary><b>Long and detailed work journal, click to expand</b></summary>
+<p>
 * Added a couple of vector sum implementations in benchmark project to compare different intrinsic approaches. The aim is to achieve maximum throughput with ILP minded design. However compiler optimizes away different ways in which I try to maximize the throughput for my own specific CPU architecture.
 * In order to address this issue, I wrote another benchmark with inline assembly and compiled it with GCC (as MSVC doesn't support inline assembly in x64 architecture). First of all, I tested GCC's behaviour with intrinsics and found it to be same as MSVC's for our purposes. Having shown that, I've written volatile inline assembly to force compiler to use my implementation. The tests showed that the compiler optimized the intrinsics to almost the same level when the optimizations are enabled. But compiler optimized versions, and my ASM code, is still not fast enough to compete with BLAS packages. So I'm doing something wrong in the first place and writing ASM is not the answer.
 * Benchmarked auto vectorization, naive intrinsics and other 2 intrinsic based block multiplication implementations, last 2 methods are about 15% faster than naive intrinsics and auto vectorized code. But arithmetic intensity (FLOPs / memory accesses) is still quite low.
 * Started analyzing the bottlenecks further using **Intel's VTune and Advisor**. It now became apparent that while I was getting similar results from different approaches, each had **different bottlenecks** which at first I couldn't see. So with this detailed information I should be able to address those bottlenecks.
 * Added another intrinsic based block multiplication method, changed a few implementations to use **FMA** intructions rather than seperate multiply-adds, to achieve higher throughput.
-* When profiling my program I noticed that small block sizes that can fit into L2 cache yielded a lot of L3 misses and for large blocks that utilized L3 well and cut down the DRAM fetches, the block multiplication ran into L2 misses. So applying the idea that led to blocking to begin with, I eill implemenent **one more level of blocking** to better utilize multiple layers of cache.
+* When profiling my program I noticed that small block sizes that can fit into L2 cache yielded a lot of L3 misses and large blocks that utilized L3 well and cut down the DRAM fetches, ran into L2 misses. So applying the idea that led to blocking to begin with, I will implement **one more level of blocking** to better utilize multiple layers of cache.
+</p>
+</details>
+
+### 15/11/2018
+* Implemented **one more level of blocking**, first block holds data in L3 while the second holds the data in L2. To avoid the "job" overhead in thread pool system and to allow for explicit software prefetching, threads groups handle the highest level of blocks. (If the job was issued on lower level blocks, the threads need explicit syncing so that they only issue prefetch command once per L3 block.)
+* Implemented **software prefetching**. Now while an L3 block is being computed, next one is loaded into the memory in an asynchronous manner. May implement a similar feature for L2 level blocks later on.
+* **Removed** all but one of the *MMHelper_MultBlocks* implementations.
+* **Converted** AVX multiply and add intrinsics to **fused multiply add intrinsics** from FMA set.
+* **Now the MultBlocks use the loaded __m256 vectors as long as possible without unloading and loading a new one.** Just like we keep same values in cache and use them as much as possible without unloading, this is the the same idea applied to **YMM registers**. This increased Arithmetic Intensity (FLOP/L1 Transferred Bytes) metric from 0.25 to 0.67, speeding up the entire matrix multiplication by the same ratio.
+* Now fully integrated **VTune** into my workflow to analyze the application.
