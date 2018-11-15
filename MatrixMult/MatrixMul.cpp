@@ -22,7 +22,7 @@
 #define SSE_ALIGN 16
 
 constexpr unsigned L3BlockX = 32, L3BlockY = 64;
-constexpr unsigned L2BlockX = 4, L2BlockY = 4;
+constexpr unsigned L2BlockX = 4, L2BlockY = 2;
 constexpr unsigned cacheLineSz = 64;
 
 constexpr int doPrefetch = 1;
@@ -303,8 +303,8 @@ void MMHelper_MultBlocks(float* __restrict const matData, const unsigned blockX,
     /* 
     * assume L2BlockX = 4, L2BlockY % 2 == 0
     */
-    for (int blockRowC = rowC; blockRowC < rowC + L3BlockY; blockRowC += L2BlockY) {
-        for (int blockColC = colC; blockColC < colC + (L3BlockX >> 1); blockColC += L2BlockX) {
+    for (int blockColC = colC; blockColC < colC + (L3BlockX >> 1); blockColC += L2BlockX) {
+        for (int blockRowC = rowC; blockRowC < rowC + L3BlockY; blockRowC += L2BlockY) {
             for (int blockRow = 0; blockRow < L2BlockY; blockRow+=2) {
                 const unsigned matAoffset1 = (blockRowC + blockRow + 0) * matA.rowSpan;
                 const unsigned matAoffset2 = (blockRowC + blockRow + 1) * matA.rowSpan;
@@ -424,28 +424,8 @@ const Mat MTMatMul(const Mat& matA, const Mat& matB) {
 
     //prefetched[0][0]++;
 
-    //int largeBlockRowC = 0;
-    //for (; largeBlockRowC <= matA.height - L3BlockY; largeBlockRowC += L3BlockY) {
-    //    int largeBlockColC = 0;
-    //    for (; largeBlockColC <= matB.width - L3BlockX; largeBlockColC += L3BlockX) {
-    //        for (int blockRowC = 0; blockRowC < L3BlockY; blockRowC += L2BlockY) {
-    //            for (int blockColC = 0; blockColC < L3BlockX; blockColC += 2*L2BlockX) {
-    //                tp.Add({
-    //                    HWLocalThreadPool<>::WrapFunc(MMHelper_MultBlocks,
-    //                        matData, 0, 0, largeBlockRowC + blockRowC,
-    //                            largeBlockColC + blockColC, matA, matB, matBT),
-    //                    HWLocalThreadPool<>::WrapFunc(MMHelper_MultBlocks,
-    //                        matData, 0, 0, largeBlockRowC + blockRowC,
-    //                            largeBlockColC+ blockColC + L2BlockX, matA, matB, matBT)
-    //                    });
-    //            }
-    //        }
-    //    }
-    //}
-
     int largeBlockRowC = 0;
     for (; largeBlockRowC <= matA.height - L3BlockY; largeBlockRowC += L3BlockY) {
-        /* Process BlockX X BlockY blocks */
         int largeBlockColC = 0;
         for (; largeBlockColC <= matB.width - L3BlockX; largeBlockColC += L3BlockX) {
             tp.Add({
@@ -458,47 +438,6 @@ const Mat MTMatMul(const Mat& matA, const Mat& matB) {
             });
         }
     }
-
-    //const unsigned blockX = 8, blockY = 128;
-    //const unsigned subX = blockX >> 1;
-
-    //int rowC = 0;
-    //for (; rowC < matA.height - blockY; rowC += blockY) {
-    //    int colC = 0;
-    //    /* Process BlockX X BlockY blocks */
-    //    for (; colC < matB.width - blockX; colC += blockX) {
-    //        tp.Add({
-    //            HWLocalThreadPool<>::WrapFunc(MMHelper_MultBlocks,
-    //            matData, subX, blockY, rowC, colC, matA, matB, matBT),
-    //            HWLocalThreadPool<>::WrapFunc(MMHelper_MultBlocks,
-    //            matData, subX, blockY, rowC, colC + subX, matA, matB, matBT)
-    //            });
-    //    }
-    //    /* Process remainings at the end of the row, width < blockX */
-    //    tp.Add({
-    //        HWLocalThreadPool<>::WrapFunc(MMHelper_MultBlocks,
-    //        matData, matB.width - colC, blockY, rowC, colC, matA, matB, matBT),
-    //        []() {}
-    //        });
-    //}
-
-    ///* Process last row, height < blockY, col+=blockX */
-    //int colC = 0;
-    //for (; colC < matB.width - blockX; colC += blockX) {
-    //    tp.Add({
-    //        HWLocalThreadPool<>::WrapFunc(MMHelper_MultBlocks,
-    //        matData, subX, matA.height - rowC, rowC, colC, matA, matB, matBT) ,
-    //        HWLocalThreadPool<>::WrapFunc(MMHelper_MultBlocks,
-    //        matData, subX, matA.height - rowC, rowC, colC + subX, matA, matB, matBT)
-    //        });
-    //}
-
-    ///* Process bottom right block, h < bY, w < bX */
-    //tp.Add({
-    //    HWLocalThreadPool<>::WrapFunc(MMHelper_MultBlocks,
-    //    matData, matB.width - colC, matA.height - rowC, rowC, colC, matA, matB, matBT),
-    //    []() {}
-    //    });
 
     tp.Close();
     _aligned_free(matBT.mat);
