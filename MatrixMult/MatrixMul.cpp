@@ -22,7 +22,7 @@
 #define SSE_ALIGN 16
 
 constexpr unsigned L3BlockX = 32, L3BlockY = 64;
-constexpr unsigned L2BlockX = 4, L2BlockY = 2;
+constexpr unsigned L2BlockX = 3, L2BlockY = 3;
 constexpr unsigned cacheLineSz = 64;
 
 constexpr int doPrefetch = 1;
@@ -260,7 +260,7 @@ const Mat ST_BlockMult(const Mat& matA, const Mat& matB) {
 }
 
 __declspec(noalias)
-void MMHelper_MultBlocks(float* __restrict const matData, const unsigned blockX, const unsigned blockY,
+void MMHelper_MultBlocks_(float* __restrict const matData, const unsigned blockX, const unsigned blockY,
     const unsigned rowC, const unsigned colC,
     const Mat& matA, const Mat& matB, const Mat& matBT)
 {
@@ -376,6 +376,133 @@ void MMHelper_MultBlocks(float* __restrict const matData, const unsigned blockX,
         }
     }
 }
+
+/* Can we get from 0.67 to 0.75 like MKL achieves ?? */
+__declspec(noalias)
+void MMHelper_MultBlocks(float* __restrict const matData, const unsigned blockX, const unsigned blockY,
+    const unsigned rowC, const unsigned colC,
+    const Mat& matA, const Mat& matB, const Mat& matBT)
+{
+    __declspec(align(32)) float fps[8 * 10];
+    const float* __restrict const matAmat = matA.mat;
+    const float* __restrict const matBTmat = matBT.mat;
+
+    /* try to prefetch next L3 block into memory while still handling this one */
+    {
+        if constexpr (doPrefetch) {
+            std::unique_lock<std::mutex> lock(prefetchMutex);
+            if (!prefetched[rowC / L3BlockY][colC / L3BlockX] && colC + L3BlockX < matBT.height && rowC + L3BlockY < matA.height) {
+                for (int r = rowC; r < rowC + L3BlockY; ++r) {
+                    for (int pos = 0; pos < matA.rowSpan; pos += cacheLineSz) {
+                        _mm_prefetch((const char*)&matA.mat[r*matA.rowSpan + pos], _MM_HINT_T2);
+                    }
+                }
+                for (int c = colC; c < colC + L3BlockX; ++c) {
+                    for (int pos = 0; pos < matA.rowSpan; pos += cacheLineSz) {
+                        _mm_prefetch((const char*)&matBT.mat[c*matBT.rowSpan + pos], _MM_HINT_T2);
+                    }
+                }
+                prefetched[rowC / L3BlockY][colC / L3BlockX]++;
+                //printf("L3 block starting from %d %d NOW FETCHING\n", rowC / L3BlockY, colC / L3BlockX);
+            }
+            else {
+                //printf("L3 block starting from %d %d already prefetched\n",  rowC/L3BlockY, colC/L3BlockX);
+            }
+            if (!prefetched[rowC / L3BlockY][colC / L3BlockX + 1] && colC + 2 * L3BlockX < matBT.height) {
+                for (int c = colC + L3BlockX; c < colC + L3BlockX + L3BlockX / 2; ++c) {
+                    for (int pos = 0; pos < matA.rowSpan; pos += cacheLineSz) {
+                        _mm_prefetch((const char*)&matBT.mat[c*matBT.rowSpan + pos], _MM_HINT_T2);
+                    }
+                }
+                prefetched[rowC / L3BlockY][colC / L3BlockX + 1]++;
+            }
+        }
+    }
+
+    /*
+    * assume L2BlockX = 3, L2BlockY % 3 == 0
+    */
+    for (int blockColC = colC; blockColC < colC + (L3BlockX >> 1); blockColC += L2BlockX) {
+        for (int blockRowC = rowC; blockRowC < rowC + L3BlockY; blockRowC += L2BlockY) {
+            for (int blockRow = 0; blockRow < L2BlockY; blockRow += 3) {
+                const unsigned matAoffset1 = (blockRowC + blockRow + 0) * matA.rowSpan;
+                const unsigned matAoffset2 = (blockRowC + blockRow + 1) * matA.rowSpan;
+                const unsigned matAoffset3 = (blockRowC + blockRow + 2) * matA.rowSpan;
+                const unsigned matBToffset1 = (blockColC + 0) * matBT.rowSpan;
+                const unsigned matBToffset2 = (blockColC + 1) * matBT.rowSpan;
+                const unsigned matBToffset3 = (blockColC + 2) * matBT.rowSpan;
+                const unsigned matBToffset4 = (blockColC + 3) * matBT.rowSpan;
+
+                __m256 a1, a2, a3, b1, b2, b3;
+                __m256 c1 = _mm256_setzero_ps();
+                __m256 c2 = _mm256_setzero_ps();
+                __m256 c3 = _mm256_setzero_ps();
+                __m256 c4 = _mm256_setzero_ps();
+                __m256 c5 = _mm256_setzero_ps();
+                __m256 c6 = _mm256_setzero_ps();
+                __m256 c7 = _mm256_setzero_ps();
+                __m256 c8 = _mm256_setzero_ps();
+                __m256 c9 = _mm256_setzero_ps();
+
+                for (int pos = 0; pos < matA.width; pos += 8) {
+                    a1 = _mm256_load_ps(&matAmat[matAoffset1 + pos]);
+                    a2 = _mm256_load_ps(&matAmat[matAoffset2 + pos]);
+                    a3 = _mm256_load_ps(&matAmat[matAoffset3 + pos]);
+
+                    b1 = _mm256_load_ps(&matBTmat[matBToffset1 + pos]);
+                    b2 = _mm256_load_ps(&matBTmat[matBToffset2 + pos]);
+                    b3 = _mm256_load_ps(&matBTmat[matBToffset3 + pos]);
+
+                    c1 = _mm256_fmadd_ps(a1, b1, c1);
+                    c2 = _mm256_fmadd_ps(a1, b2, c2);
+                    c3 = _mm256_fmadd_ps(a1, b3, c3);
+
+                    c4 = _mm256_fmadd_ps(a2, b1, c4);
+                    c5 = _mm256_fmadd_ps(a2, b2, c5);
+                    c6 = _mm256_fmadd_ps(a2, b3, c6);
+
+                    c7 = _mm256_fmadd_ps(a3, b1, c7);
+                    c8 = _mm256_fmadd_ps(a3, b2, c8);
+                    c9 = _mm256_fmadd_ps(a3, b3, c9);
+                }
+
+                /* horizontal sum */
+
+                __declspec(align(32)) float accumulate[9];
+                memset(&accumulate[0], 0, 9*sizeof(float));
+
+                _mm256_store_ps(&fps[0], c1);
+                _mm256_store_ps(&fps[8], c2);
+                _mm256_store_ps(&fps[16], c3);
+                _mm256_store_ps(&fps[24], c4);
+                _mm256_store_ps(&fps[32], c5);
+                _mm256_store_ps(&fps[40], c6);
+                _mm256_store_ps(&fps[48], c7);
+                _mm256_store_ps(&fps[56], c8);
+                _mm256_store_ps(&fps[64], c9);
+
+                for (int i = 0; i < 9; ++i) {
+                    for (int j = 0; j < 8; ++j) {
+                        accumulate[i] += fps[i * 8 + j];
+                    }
+                }
+
+                matData[(blockRowC + blockRow + 0)*matB.rowSpan + blockColC + 0] = accumulate[0];
+                matData[(blockRowC + blockRow + 0)*matB.rowSpan + blockColC + 1] = accumulate[1];
+                matData[(blockRowC + blockRow + 0)*matB.rowSpan + blockColC + 2] = accumulate[2];
+
+                matData[(blockRowC + blockRow + 1)*matB.rowSpan + blockColC + 0] = accumulate[3];
+                matData[(blockRowC + blockRow + 1)*matB.rowSpan + blockColC + 1] = accumulate[4];
+                matData[(blockRowC + blockRow + 1)*matB.rowSpan + blockColC + 2] = accumulate[5];
+
+                matData[(blockRowC + blockRow + 2)*matB.rowSpan + blockColC + 0] = accumulate[6];
+                matData[(blockRowC + blockRow + 2)*matB.rowSpan + blockColC + 1] = accumulate[7];
+                matData[(blockRowC + blockRow + 2)*matB.rowSpan + blockColC + 2] = accumulate[9];
+            }
+        }
+    }
+}
+
 
 __declspec(noalias)
 const Mat MTMatMul(const Mat& matA, const Mat& matB) {
