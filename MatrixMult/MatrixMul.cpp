@@ -275,8 +275,8 @@ const Mat ST_BlockMult(const Mat& matA, const Mat& matB)
 * This requirement however, is not asserted. */
 __declspec(noalias) void MMHelper_MultRemBlocks(
   float* __restrict const matData, const unsigned rowSpan, const Mat& matA,
-  const Mat& matBT, const unsigned colC, const unsigned rowC, const unsigned blockX,
-  const unsigned blockY, const MMBlockInfo& mmBlockInfo)
+  const Mat& matBT, const unsigned colC, const unsigned rowC, const int blockX,
+  const int blockY, const MMBlockInfo& mmBlockInfo)
 {
     /* if no work to be done, exit */
     if (blockX <= 0 || blockY <= 0)
@@ -943,20 +943,23 @@ __declspec(noalias) const Mat MTMatMul(const Mat& matA, const Mat& matB)
     //prefetched[0][0]++;
 
     /* decide the best block sizes for the given matrix and CPU */
-    const unsigned L3BlockX = 60, L3BlockY = 60;
-    const unsigned L2BlockX = 6, L2BlockY = 6;
-    const unsigned halfL3X = L3BlockX >> 1;
+    const int L3BlockX = 60, L3BlockY = 60;
+    const int L2BlockX = 6, L2BlockY = 6;
+    const int halfL3X = L3BlockX >> 1;
+
 
     MMBlockInfo mmBlockInfo{L3BlockX, L3BlockY, L2BlockX, L2BlockY};
 
     /* start issuing jobs for the thread pool */
 
     int largeBlockRowC = 0;
-    /* handle L3Y sized rows */
-    for (; largeBlockRowC <= matA.height - L3BlockY; largeBlockRowC += L3BlockY) {
+    /* handle L3Y sized rows 
+     * cast unsigned dimensions to signed to avoid UB 
+     * for small matrices where N < L3 block size */
+    for (; largeBlockRowC <= (int)matA.height - L3BlockY; largeBlockRowC += L3BlockY) {
         int largeBlockColC = 0;
         /* handle L3X x L3Y sized blocks */
-        for (; largeBlockColC <= matB.width - L3BlockX; largeBlockColC += L3BlockX) {
+        for (; largeBlockColC <= (int)matB.width - L3BlockX; largeBlockColC += L3BlockX) {
             tp.Add({HWLocalThreadPool<>::WrapFunc(
                       MMHelper_MultFullBlocks, matData, matB.rowSpan, matA, matBT,
                       largeBlockColC, largeBlockRowC, mmBlockInfo),
@@ -965,7 +968,7 @@ __declspec(noalias) const Mat MTMatMul(const Mat& matA, const Mat& matB)
                       largeBlockColC + halfL3X, largeBlockRowC, mmBlockInfo)});
         }
         /* handle the block w < L3X, h = L3Y at the end of the column */
-        if (matB.width - largeBlockColC > 0) {
+        if (matB.width > largeBlockColC) {
             const unsigned remSubX = (matB.width - largeBlockColC) / 2;
             tp.Add({HWLocalThreadPool<>::WrapFunc(
                       MMHelper_MultRemBlocks, matData, matB.rowSpan, matA, matBT,
@@ -979,8 +982,7 @@ __declspec(noalias) const Mat MTMatMul(const Mat& matA, const Mat& matB)
     int largeBlockColC = 0;
     /* handle last row, h < L3Y */
     /* first handle blocks of w = L3X, h < L3Y */
-    for (; largeBlockColC <= matB.width - L3BlockX; largeBlockColC += L3BlockX) {
-        /* handle blocks of L3X , h */
+    for (; largeBlockColC <= (int)matB.width - L3BlockX; largeBlockColC += L3BlockX) {
         tp.Add({HWLocalThreadPool<>::WrapFunc(
                     MMHelper_MultRemBlocks, matData, matB.rowSpan, matA, matBT,
                     largeBlockColC, largeBlockRowC, halfL3X,
@@ -1022,18 +1024,18 @@ const Mat MatMul(const Mat& matA, const Mat& matB)
 
 int __cdecl main(int argc, char* argv[])
 {
-    if (argc < 4) {
-        std::cout << "No args\n";
-        return 0;
-    }
+    //if (argc < 4) {
+    //    std::cout << "No args\n";
+    //    return 0;
+    //}
 
-    const char* inputMtxAFile = argv[1];
-    const char* inputMtxBFile = argv[2];
-    const char* outMtxABFile = argv[3];
+    //const char* inputMtxAFile = argv[1];
+    //const char* inputMtxBFile = argv[2];
+    //const char* outMtxABFile = argv[3];
 
-    //const char* inputMtxAFile = "matrixA.bin";
-    //const char* inputMtxBFile = "matrixB.bin";
-    //const char* outMtxABFile = "matrixAB-out.bin";
+    const char* inputMtxAFile = "matrixA.bin";
+    const char* inputMtxBFile = "matrixB.bin";
+    const char* outMtxABFile = "matrixAB-out.bin";
 
     const Mat inputMtxA = LoadMat(inputMtxAFile);
     const Mat inputMtxB = LoadMat(inputMtxBFile);

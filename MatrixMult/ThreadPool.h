@@ -94,15 +94,15 @@
 
 namespace QueryHWCores
 {
-static char       cache = 0;
-static unsigned   numHWCores;
+static char cache = 0;
+static unsigned numHWCores;
 static ULONG_PTR* map = NULL;
 
 const char* BitmaskToStr(WORD bitmask)
 {
-    const unsigned N   = sizeof(WORD) * 8;
-    char* const    str = new char[N + 1];
-    str[N]             = 0;
+    const unsigned N = sizeof(WORD) * 8;
+    char* const str = new char[N + 1];
+    str[N] = 0;
     for (int i = 0; i < N; ++i) {
         str[N - i - 1] = '0' + ((bitmask)&1);
         bitmask >>= 1;
@@ -111,24 +111,20 @@ const char* BitmaskToStr(WORD bitmask)
 }
 
 void PrintSysLPInfoArr(_SYSTEM_LOGICAL_PROCESSOR_INFORMATION* const sysLPInf,
-                       const DWORD&                                 retLen)
+                       const DWORD& retLen)
 {
     unsigned numPhysicalCores = 0;
-    for (int i = 0; i * sizeof(_SYSTEM_LOGICAL_PROCESSOR_INFORMATION) <= retLen;
-         ++i) {
+    for (int i = 0; i * sizeof(_SYSTEM_LOGICAL_PROCESSOR_INFORMATION) <= retLen; ++i) {
         if (sysLPInf[i].Relationship != RelationProcessorCore)
             continue;
 
-        printf(
-          "PHYSICAL CPU[%d]\n\t_SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX:\n",
-          numPhysicalCores);
-        printf("\t\tProcessorMask:%s\n",
-               BitmaskToStr(sysLPInf[i].ProcessorMask));
+        printf("PHYSICAL CPU[%d]\n\t_SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX:\n",
+               numPhysicalCores);
+        printf("\t\tProcessorMask:%s\n", BitmaskToStr(sysLPInf[i].ProcessorMask));
         printf("\t\tRelationship:%u | RelationProcessorCore\n",
                (uint8_t)sysLPInf[i].Relationship);
         printf("\t\tProcessorCore:\n");
-        printf("\t\t\tFlags(HT?):%d\n",
-               (uint8_t)sysLPInf[i].ProcessorCore.Flags);
+        printf("\t\t\tFlags(HT?):%d\n", (uint8_t)sysLPInf[i].ProcessorCore.Flags);
         ++numPhysicalCores;
     }
 }
@@ -146,8 +142,7 @@ int TestCPUCores()
         DWORD errCode = GetLastError();
         printf("ERR: %d\n", errCode);
         if (errCode == ERROR_INSUFFICIENT_BUFFER) {
-            printf("Buffer is not large enough! Buffer length required: %d\n",
-                   retLen);
+            printf("Buffer is not large enough! Buffer length required: %d\n", retLen);
         } else {
             printf("CHECK MSDN SYSTEM ERROR CODES LIST.\n");
         }
@@ -177,8 +172,7 @@ DWORD _GetSysLPMap(unsigned& numHWCores)
     ULONG_PTR* const lMap = (ULONG_PTR*)malloc(M * sizeof(ULONG_PTR));
 
     numHWCores = 0;
-    for (int i = 0; i * sizeof(_SYSTEM_LOGICAL_PROCESSOR_INFORMATION) <= retLen;
-         ++i) {
+    for (int i = 0; i * sizeof(_SYSTEM_LOGICAL_PROCESSOR_INFORMATION) <= retLen; ++i) {
         if (sysLPInf[i].Relationship != RelationProcessorCore)
             continue;
 
@@ -238,10 +232,8 @@ ULONG_PTR* GetProcessorMaskMap_UNSAFE()
 }
 }; // namespace QueryHWCores
 
-template<int NumOfCoresToUse = -1, int NumThreadsPerCore = 2>
-class HWLocalThreadPool
-{
-    public:
+template <int NumOfCoresToUse = -1, int NumThreadsPerCore = 2> class HWLocalThreadPool {
+public:
     HWLocalThreadPool() : m_terminate(false)
     {
         m_numHWCores = QueryHWCores::GetNumHWCores();
@@ -253,20 +245,19 @@ class HWLocalThreadPool
 
         /* malloc m_coreHandlers s.t no default initialization takes place, 
         we construct every object with placement new */
-        m_coreHandlers =
-          (CoreHandler*)malloc(m_numCoreHandlers * sizeof(CoreHandler));
+        m_coreHandlers = (CoreHandler*)malloc(m_numCoreHandlers * sizeof(CoreHandler));
         m_coreHandlerThreads = new std::thread[m_numCoreHandlers];
 
         for (int i = 0; i < m_numCoreHandlers; ++i) {
             ULONG_PTR processAffinityMask;
-            int       maskQueryRetCode =
+            int maskQueryRetCode =
               QueryHWCores::GetProcessorMask(i, processAffinityMask);
             if (maskQueryRetCode) {
                 assert(0, "Can't query processor relations.");
                 return;
             }
-            CoreHandler* coreHandler = new (&m_coreHandlers[i])
-              CoreHandler(this, i, processAffinityMask);
+            CoreHandler* coreHandler =
+              new (&m_coreHandlers[i]) CoreHandler(this, i, processAffinityMask);
             m_coreHandlerThreads[i] = std::thread(std::ref(m_coreHandlers[i]));
         }
     }
@@ -289,7 +280,7 @@ class HWLocalThreadPool
     {
         {
             std::unique_lock<std::mutex> lock(m_queueMutex);
-            m_terminate    = 1;
+            m_terminate = 1;
             m_waitToFinish = finishQueue;
             m_queueToCoreNotifier.notify_all();
         }
@@ -312,7 +303,7 @@ class HWLocalThreadPool
         return m_numHWCores;
     }
 
-    template<typename F, typename... Args>
+    template <typename F, typename... Args>
     static std::function<void()> WrapFunc(F&& f, Args&&... args)
     {
         std::function<decltype(f(args...))()> func =
@@ -325,12 +316,15 @@ class HWLocalThreadPool
         return wrapper_func;
     }
 
-    protected:
-    template<typename T> class Queue
-    {
-        public:
-        Queue() {}
-        ~Queue() {}
+protected:
+    template <typename T> class Queue {
+    public:
+        Queue()
+        {
+        }
+        ~Queue()
+        {
+        }
 
         void Push(T const& element)
         {
@@ -355,28 +349,26 @@ class HWLocalThreadPool
             return m_queue.size();
         }
 
-        private:
+    private:
         std::queue<T> m_queue;
-        std::mutex    m_mutex;
+        std::mutex m_mutex;
     };
 
-    class CoreHandler
-    {
-        public:
+    class CoreHandler {
+    public:
         CoreHandler(HWLocalThreadPool* const _parent, const unsigned _id,
-                    const ULONG_PTR& _processorMask) :
-            m_parent(_parent),
-            m_id(_id), m_processorAffinityMask(_processorMask),
-            m_terminate(false), m_numChildThreads(NumThreadsPerCore - 1)
+                    const ULONG_PTR& _processorMask)
+            : m_parent(_parent), m_id(_id), m_processorAffinityMask(_processorMask),
+              m_terminate(false), m_numChildThreads(NumThreadsPerCore - 1)
         {
             if (m_numChildThreads > 0) {
-                m_childThreads      = new std::thread[m_numChildThreads];
+                m_childThreads = new std::thread[m_numChildThreads];
                 m_childThreadOnline = new bool[m_numChildThreads];
                 std::unique_lock<std::mutex> lock(m_threadMutex);
                 for (int i = 0; i < m_numChildThreads; ++i) {
                     m_childThreadOnline[i] = 0;
-                    m_childThreads[i]      = std::thread(
-                      ThreadHandler(this, i, m_processorAffinityMask));
+                    m_childThreads[i] =
+                      std::thread(ThreadHandler(this, i, m_processorAffinityMask));
                 }
             }
         }
@@ -387,7 +379,7 @@ class HWLocalThreadPool
                 return;
 
             std::unique_lock<std::mutex> lock(m_threadMutex);
-            bool                         anyOnline = 1;
+            bool anyOnline = 1;
             while (anyOnline) {
                 anyOnline = 0;
                 for (int i = 0; i < m_numChildThreads; ++i) {
@@ -429,8 +421,7 @@ class HWLocalThreadPool
                 {
                     std::unique_lock<std::mutex> lock(m_parent->m_queueMutex);
                     if (m_parent->m_terminate &&
-                        !(m_parent->m_waitToFinish &&
-                          m_parent->m_queue.Size() > 0)) {
+                        !(m_parent->m_waitToFinish && m_parent->m_queue.Size() > 0)) {
                         break;
                     }
                     if (m_parent->m_queue.Size() == 0) {
@@ -465,41 +456,37 @@ class HWLocalThreadPool
             //std::cout << "Child threads are terminated\n";
         }
 
-        class ThreadHandler
-        {
-            public:
+        class ThreadHandler {
+        public:
             ThreadHandler(CoreHandler* _parent, const unsigned _id,
-                          const ULONG_PTR& _processorAffinityMask) :
-                m_parent(_parent),
-                m_processorAffinityMask(_processorAffinityMask), m_id(_id),
-                m_jobSlot(_id + 1)
+                          const ULONG_PTR& _processorAffinityMask)
+                : m_parent(_parent), m_processorAffinityMask(_processorAffinityMask),
+                  m_id(_id), m_jobSlot(_id + 1)
             {
             }
 
             void operator()()
             {
-                SetThreadAffinityMask(GetCurrentThread(),
-                                      m_processorAffinityMask);
+                SetThreadAffinityMask(GetCurrentThread(), m_processorAffinityMask);
                 while (1) {
                     {
                         //std::cout << "Thread checking for jobs!!\n";
-                        std::unique_lock<std::mutex> lock(
-                          m_parent->m_threadMutex);
+                        std::unique_lock<std::mutex> lock(m_parent->m_threadMutex);
                         if (m_parent->m_terminate)
                             break;
                         if (!m_parent->m_childThreadOnline[m_id]) {
                             m_parent->m_coreToThreadNotifier.wait(lock);
                         }
                     }
-                    func        = std::move(m_parent->m_job[m_jobSlot]);
                     bool online = 0;
                     {
+                        std::unique_lock<std::mutex> lock(m_parent->m_threadMutex);
                         online = m_parent->m_childThreadOnline[m_id];
                     }
                     if (online) {
+                        func = std::move(m_parent->m_job[m_jobSlot]);
                         func();
-                        std::unique_lock<std::mutex> lock(
-                          m_parent->m_threadMutex);
+                        std::unique_lock<std::mutex> lock(m_parent->m_threadMutex);
                         m_parent->m_childThreadOnline[m_id] = 0;
                         m_parent->m_threadToCoreNotifier.notify_one();
                     }
@@ -507,32 +494,32 @@ class HWLocalThreadPool
                 //std::cout << "Exiting the thread!\n";
             }
 
-            const unsigned        m_id;
-            const unsigned        m_jobSlot;
-            CoreHandler*          m_parent;
-            ULONG_PTR             m_processorAffinityMask;
+            const unsigned m_id;
+            const unsigned m_jobSlot;
+            CoreHandler* m_parent;
+            ULONG_PTR m_processorAffinityMask;
             std::function<void()> func;
         };
 
-        const unsigned           m_id;
+        const unsigned m_id;
         HWLocalThreadPool* const m_parent;
-        const ULONG_PTR          m_processorAffinityMask;
-        const unsigned           m_numChildThreads;
+        const ULONG_PTR m_processorAffinityMask;
+        const unsigned m_numChildThreads;
 
         std::thread* m_childThreads;
-        bool*        m_childThreadOnline;
-        bool         m_terminate;
+        bool* m_childThreadOnline;
+        bool m_terminate;
 
         std::vector<std::function<void()>> m_job;
-        std::function<void()>              m_ownJob;
+        std::function<void()> m_ownJob;
 
         //std::mutex m_coreMutex;
-        std::mutex              m_threadMutex;
+        std::mutex m_threadMutex;
         std::condition_variable m_coreToThreadNotifier;
         std::condition_variable m_threadToCoreNotifier;
     };
 
-    unsigned     m_numHWCores, m_numCoreHandlers;
+    unsigned m_numHWCores, m_numCoreHandlers;
     CoreHandler* m_coreHandlers;
     std::thread* m_coreHandlerThreads;
 
@@ -540,6 +527,6 @@ class HWLocalThreadPool
 
     bool m_terminate, m_waitToFinish;
 
-    std::mutex              m_queueMutex;
+    std::mutex m_queueMutex;
     std::condition_variable m_queueToCoreNotifier;
 };
