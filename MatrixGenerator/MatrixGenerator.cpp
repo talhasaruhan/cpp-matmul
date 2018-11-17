@@ -135,17 +135,17 @@ int _cdecl main(int argc, char *argv[])
 
 	std::random_device rd;
 	//std::uniform_int_distribution<unsigned> matSizeDist(10, 100); //small
-	std::uniform_int_distribution<unsigned> matSizeDist(600, 600); //big
+	std::uniform_int_distribution<unsigned> matSizeDist(100, 1000); //big
 	std::uniform_real_distribution<float> matValDist(-50.0f, 50.0f);
 	auto matRand = std::bind(matValDist, std::ref(rd));
 	auto sizeRand = std::bind(matSizeDist, std::ref(rd));
 	Mat a, b;
 
-    a.width = 610; //sizeRand();
-	a.height = 610; //sizeRand();
+    a.width = sizeRand();
+	a.height = sizeRand();
 	a.rowSpan = RoundUpPwr2(a.width, FLT_ALIGN);
 
-    b.width = 610; // sizeRand();
+    b.width = sizeRand();
 	b.height = a.width;
 	b.rowSpan = RoundUpPwr2(b.width, FLT_ALIGN);
 
