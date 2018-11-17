@@ -4,6 +4,8 @@
 #include <functional>
 #include <iostream>
 #include <chrono>
+#include <cstdlib>
+#include <cassert>
 
 typedef struct Mat
 {
@@ -64,14 +66,19 @@ static unsigned RoundUpPwr2(unsigned val, unsigned pwr2)
 	return (val + (pwr2 - 1)) & (~(pwr2 - 1));
 }
 
-static void PrintMat(const Mat &mat) {
+/* This function prints the given matrix to given std::ostream */
+static void PrintMat(const Mat& mat, std::ostream& stream)
+{
+    stream << "w, h, rS: " << mat.width << " " << mat.height << "  " << mat.rowSpan
+        << "\n";
     for (int i = 0; i < mat.height; i++) {
         for (int j = 0; j < mat.width; ++j) {
-            printf("%f ", mat.mat[i*mat.rowSpan + j]);
+            stream << mat.mat[i * mat.rowSpan + j] << " ";
         }
-        printf("\n");
+        stream << "\n";
     }
 }
+
 
 /* Single threaded, do i need to multithread this as well? 
 Honestly, I don't think it will have any significant effect. n^2 vs n^3 */
@@ -134,44 +141,70 @@ int _cdecl main(int argc, char *argv[])
 	static const unsigned FLT_ALIGN = ALIGN / sizeof(float);
 
 	std::random_device rd;
-	//std::uniform_int_distribution<unsigned> matSizeDist(10, 100); //small
-	std::uniform_int_distribution<unsigned> matSizeDist(100, 1000); //big
 	std::uniform_real_distribution<float> matValDist(-50.0f, 50.0f);
 	auto matRand = std::bind(matValDist, std::ref(rd));
-	auto sizeRand = std::bind(matSizeDist, std::ref(rd));
 	Mat a, b;
 
-    a.width = sizeRand();
-	a.height = sizeRand();
-	a.rowSpan = RoundUpPwr2(a.width, FLT_ALIGN);
+    if (argc == 1) {
+        /* randomly generated */
+	    std::uniform_int_distribution<unsigned> matSizeDist(100, 1000);
+	    auto sizeRand = std::bind(matSizeDist, std::ref(rd));
+        a.width = sizeRand();
+	    a.height = sizeRand();
+	    a.rowSpan = RoundUpPwr2(a.width, FLT_ALIGN);
 
-    b.width = sizeRand();
-	b.height = a.width;
-	b.rowSpan = RoundUpPwr2(b.width, FLT_ALIGN);
+        b.width = sizeRand();
+	    b.height = a.width;
+    }
+    else if (argc == 2) {
+        /* 2 NxN */
+        const int N = atoi(argv[1]);
+        assert(N > 0);
+        a.width = N;
+        a.height = N;
+        b.width = N;
+        b.height= N;
+    }
+    else if (argc == 3) {
+        /* NxM, MxN */
+        const int N = atoi(argv[1]);
+        const int M = atoi(argv[2]);
+        assert(N > 0 && M > 0);
+        a.width = M;
+        a.height = N;
+        b.width = N;
+        b.height = M;
+    }
+    else if (argc == 4) {
+        /* NxM, MxK */
+        const int N = atoi(argv[1]);
+        const int M = atoi(argv[2]);
+        const int K = atoi(argv[2]);
+        assert(N > 0 && M > 0);
+        a.width = M;
+        a.height = N;
+        b.width = K;
+        b.height = M;    
+    }
+    else {
+        std::cerr << "Invalid arguments!\n";
+        return 2;
+    }
 
-	/*c.height = a.height;
-	c.width = b.width;
-	c.rowSpan = RoundUpPwr2(c.width, FLT_ALIGN);*/
+    a.rowSpan = RoundUpPwr2(a.width, FLT_ALIGN);
+    b.rowSpan = RoundUpPwr2(b.width, FLT_ALIGN);
 
 	a.mat = new float[a.rowSpan*a.height];
 	b.mat = new float[b.rowSpan*b.height];
-	//c.mat = new float[c.rowSpan*c.height];
 	
 	RandInitMat(&a, matRand);
 	RandInitMat(&b, matRand);
 
     printf("a: [%d %d] | b: [%d %d]\n", a.width, a.height, b.width, b.height);
 
-	/* Generate valid output through transposed multiplication,
-    Changed this to generate valid output for big matrices quicker.
-    I checked it with naive soln. and it works. */
-
     auto start = std::chrono::high_resolution_clock::now();
-
     const Mat c = ST_TransposedBMatMul(a, b);
-
     auto end = std::chrono::high_resolution_clock::now();
-
     std::cout << "Generation w/ tranposed mult. took: " 
         << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() 
         << " microseconds.\n";
