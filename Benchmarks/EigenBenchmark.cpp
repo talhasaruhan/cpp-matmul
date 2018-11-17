@@ -11,26 +11,29 @@
 using namespace std;
 using namespace Eigen;
 
-
-int main() {
-
-    const unsigned n = 10000;
+int main(int argc, char* argv[])
+{
+    int K;
+    if (argc == 1) {
+        K = 10000;
+    } else if (argc == 2) {
+        /* 2 NxN */
+        K = atoi(argv[1]);
+        assert(K > 0);
+    }
 
     mkl_set_num_threads(12);
-
-    MatrixXd matA = MatrixXd::Random(n, n);
-    MatrixXd matB = MatrixXd::Random(n, n);
-
     setNbThreads(12);
 
+    MatrixXd matA = MatrixXd::Random(K, K);
+    MatrixXd matB = MatrixXd::Random(K, K);
+
     auto start = std::chrono::high_resolution_clock::now();
-
     MatrixXd matC = matA * matB;
-
     auto end = std::chrono::high_resolution_clock::now();
 
-    std::cout << "Matrix Multiplication: " << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() << " microseconds.\n";
-
-
-    while (1) {}
+    std::cout
+        << "Matrix Multiplication: "
+        << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count()
+        << " microseconds.\n";
 }

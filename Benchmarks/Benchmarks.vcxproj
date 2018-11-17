@@ -95,6 +95,9 @@
       <OmitFramePointers>true</OmitFramePointers>
       <UseIntelOptimizedHeaders>true</UseIntelOptimizedHeaders>
       <RecognizeRestrictKeyword>true</RecognizeRestrictKeyword>
+      <EnableMatrixMultiplyLibraryCall>No</EnableMatrixMultiplyLibraryCall>
+      <ExceptionHandling>false</ExceptionHandling>
+      <FloatingPointExceptions>false</FloatingPointExceptions>
     </ClCompile>
     <Link>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>

@@ -151,6 +151,11 @@
       <RecognizeRestrictKeyword>true</RecognizeRestrictKeyword>
       <EnableMatrixMultiplyLibraryCall>No</EnableMatrixMultiplyLibraryCall>
       <OmitFramePointers>false</OmitFramePointers>
+      <FloatingPointExceptions>false</FloatingPointExceptions>
+      <FloatingPointExpressionEvaluation />
+      <GenerateAlternateCodePaths>COFFEELAKE</GenerateAlternateCodePaths>
+      <UseProcessorExtensions>COFFEELAKE</UseProcessorExtensions>
+      <Mtune>Coffeelake</Mtune>
     </ClCompile>
     <Link>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
