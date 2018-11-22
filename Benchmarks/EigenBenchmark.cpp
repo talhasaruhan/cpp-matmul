@@ -15,7 +15,7 @@ int main(int argc, char* argv[])
 {
     int K;
     if (argc == 1) {
-        K = 10000;
+        K = 5000;
     } else if (argc == 2) {
         /* 2 NxN */
         K = atoi(argv[1]);
