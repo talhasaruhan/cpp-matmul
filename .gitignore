@@ -275,3 +275,7 @@ __pycache__/
 /Benchmarks/matrixA.bin
 /Benchmarks/My Advisor Results - Benchmarks
 /Benchmarks/My Amplifier Results - Benchmarks
+/MatrixGenerator/My Amplifier Results - MatrixGenerator
+/MatrixMult/matrixB11000.bin
+/MatrixMult/matrixAB11000.bin
+/MatrixMult/matrixA11000.bin

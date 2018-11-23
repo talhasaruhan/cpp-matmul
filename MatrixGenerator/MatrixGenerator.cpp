@@ -1,3 +1,16 @@
+#define WIN32_LEAN_AND_MEAN
+#include <Windows.h>
+#include <chrono>
+#include <sstream>
+#include <iostream>
+#include <fstream>
+#include <cstdint>
+#include <random>
+#include <functional>
+#include <cstdio>
+#include <memory>
+#include <mutex>
+#include <thread>
 #include <fstream>
 #include <cstdint>
 #include <random>
@@ -6,6 +19,8 @@
 #include <chrono>
 #include <cstdlib>
 #include <cassert>
+
+#define AVX_ALIGN 32
 
 typedef struct Mat
 {
@@ -82,55 +97,47 @@ static void PrintMat(const Mat& mat, std::ostream& stream)
 
 /* Single threaded, do i need to multithread this as well? 
 Honestly, I don't think it will have any significant effect. n^2 vs n^3 */
-const Mat TransposeMat(const Mat &mat) {
+__declspec(noalias) const Mat TransposeMat(const Mat& mat)
+{
     const unsigned tRowSpan = RoundUpPwr2(mat.height, 64 / sizeof(float));
-    float * const tData = (float*)malloc(mat.width*tRowSpan * sizeof(float));
+    float* __restrict const tData =
+        (float*)_aligned_malloc(mat.width * tRowSpan * sizeof(float), AVX_ALIGN);
 
-    Mat T{
-        mat.height,
-        mat.width,
-        tRowSpan,
-        tData
-    };
+    Mat T{ mat.height, mat.width, tRowSpan, tData };
 
     // hah, the loops are truly interchangable as we encounter a cache miss either ways
     for (int rowT = 0; rowT < T.height; ++rowT) {
         for (int colT = 0; colT < T.width; ++colT) {
-            tData[rowT*tRowSpan + colT] = mat.mat[colT*mat.rowSpan + rowT];
+            tData[rowT * tRowSpan + colT] = mat.mat[colT * mat.rowSpan + rowT];
         }
     }
 
     return T;
 }
 
-const Mat ST_TransposedBMatMul(const Mat& matA, const Mat& matB) {
-    /*
-    * Now, I thought transposing B and then traversing it row order would help and it does!
+const Mat ST_TransposedBMatMul(const Mat& matA, const Mat& matB)
+{
+    /* Now, I thought transposing B and then traversing it row order would help and it does!
     * Also, note that, if we manually unrolled the loop here, compiler wouldn't vectorize the loop for some reason
-    * (1301: Loop stride is not +1.) is the exact compiler message.
-    */
-    float * __restrict const matData = (float*)malloc(matA.height * matB.rowSpan * sizeof(float));
+    * (1301: Loop stride is not +1.) is the exact compiler message. */
+    float* __restrict const matData =
+        (float*)_aligned_malloc(matA.height * matB.rowSpan * sizeof(float), AVX_ALIGN);
 
-    Mat matC{
-        matB.width,
-        matA.height,
-        matB.rowSpan,
-        matData
-    };
+    Mat matC{ matB.width, matA.height, matB.rowSpan, matData };
 
-    matC.rowSpan = matB.width;
     const Mat matBT = TransposeMat(matB);
     for (int rowC = 0; rowC < matA.height; ++rowC) {
-        //if (rowC % 10 == 0)
-        //    printf("row: %d of %d\n", rowC, matA.height);
         for (int colC = 0; colC < matB.width; ++colC) {
             float accumulate = 0;
             for (int pos = 0; pos < matA.width; ++pos) {
-                accumulate += matA.mat[rowC*matA.rowSpan + pos] * matBT.mat[colC*matBT.rowSpan + pos];
+                accumulate += matA.mat[rowC * matA.rowSpan + pos] *
+                    matBT.mat[colC * matBT.rowSpan + pos];
             }
-            matData[rowC*matB.width + colC] = accumulate;
+            matData[rowC * matB.rowSpan + colC] = accumulate;
         }
     }
+
+    _aligned_free(matBT.mat);
 
     return matC;
 }
@@ -144,6 +151,7 @@ int _cdecl main(int argc, char *argv[])
 	std::uniform_real_distribution<float> matValDist(-50.0f, 50.0f);
 	auto matRand = std::bind(matValDist, std::ref(rd));
 	Mat a, b;
+    std::string suffix;
 
     if (argc == 1) {
         /* randomly generated */
@@ -155,6 +163,8 @@ int _cdecl main(int argc, char *argv[])
 
         b.width = sizeRand();
 	    b.height = a.width;
+
+        suffix = "";
     }
     else if (argc == 2) {
         /* 2 NxN */
@@ -163,9 +173,22 @@ int _cdecl main(int argc, char *argv[])
         a.width = N;
         a.height = N;
         b.width = N;
-        b.height= N;
+        b.height = N;
+
+        suffix = "";
     }
     else if (argc == 3) {
+        /* 2 NxN */
+        const int N = atoi(argv[1]);
+        assert(N > 0);
+        a.width = N;
+        a.height = N;
+        b.width = N;
+        b.height= N;
+        
+        suffix = std::string(argv[2]);
+    }
+    else if (argc == 4) {
         /* NxM, MxN */
         const int N = atoi(argv[1]);
         const int M = atoi(argv[2]);
@@ -174,8 +197,10 @@ int _cdecl main(int argc, char *argv[])
         a.height = N;
         b.width = N;
         b.height = M;
+
+        suffix = std::string(argv[3]);
     }
-    else if (argc == 4) {
+    else if (argc == 5) {
         /* NxM, MxK */
         const int N = atoi(argv[1]);
         const int M = atoi(argv[2]);
@@ -185,11 +210,14 @@ int _cdecl main(int argc, char *argv[])
         a.height = N;
         b.width = K;
         b.height = M;    
+
+        suffix = std::string(argv[4]);
     }
     else {
         std::cerr << "Invalid arguments!\n";
         return 2;
     }
+
 
     a.rowSpan = RoundUpPwr2(a.width, FLT_ALIGN);
     b.rowSpan = RoundUpPwr2(b.width, FLT_ALIGN);
@@ -209,13 +237,13 @@ int _cdecl main(int argc, char *argv[])
         << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() 
         << " microseconds.\n";
 
-	DumpMat("matrixA.bin", a);
-	DumpMat("matrixB.bin", b);
-	DumpMat("matrixAB.bin", c);
+    DumpMat(("matrixA" + suffix + ".bin").c_str(), a);
+    DumpMat(("matrixB" + suffix + ".bin").c_str(), b);
+    DumpMat(("matrixAB" + suffix + ".bin").c_str(), c);
 
 	delete[] a.mat;
 	delete[] b.mat;
-	delete[] c.mat;
+    _aligned_free(c.mat);
 
 	return 0;
 }

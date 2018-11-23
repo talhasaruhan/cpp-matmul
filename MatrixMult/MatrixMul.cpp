@@ -24,7 +24,8 @@
 constexpr unsigned L2Size = 256 * 1024;
 constexpr unsigned L3Size = 12 * 1024 * 1024;
 
-constexpr int doPrefetch = 1;
+constexpr int doL3Prefetch = 1;
+constexpr int doL12Prefetch = 1;
 int prefetched[1024][1024];
 std::mutex prefetchMutex;
 constexpr unsigned cacheLineSz = 64;
@@ -764,7 +765,7 @@ __declspec(noalias) void MMHelper_MultFullBlocks(float* __restrict const matData
 
     /* try to prefetch next L3 block into memory while still handling this one */
     {
-        if constexpr (0) {
+        if constexpr (doL3Prefetch) {
             std::unique_lock<std::mutex> lock(prefetchMutex);
             int alreadyPrefetchedCol = prefetched[rowC / L3BlockY][colC / issuedBlockSzX];
             lock.unlock();
@@ -786,12 +787,14 @@ __declspec(noalias) void MMHelper_MultFullBlocks(float* __restrict const matData
     * also, for dense arithmetic operations, optimize the inner loop
     * assuming L2BlockX % 3 == L2BlockY % 3 == 0, issuedBlockSz % L2Block(X,Y) == 0*/
     for (int blockColC = colC; blockColC < colC + issuedBlockSzX; blockColC += L2BlockX) {
-        for (int c = blockColC; c < blockColC + L2BlockX; ++c) {
-            for (int pos = 0; pos < matA.rowSpan; pos += cacheLineSz / sizeof(float)) {
-                _mm_prefetch((const char*)&matBT.mat[c * matBT.rowSpan + pos],
-                    _MM_HINT_T1);
-            }
-        }
+        //if constexpr(doL12Prefetch) {
+        //    for (int c = blockColC; c < blockColC + L2BlockX; ++c) {
+        //        for (int pos = 0; pos < matA.rowSpan; pos += cacheLineSz / sizeof(float)) {
+        //            _mm_prefetch((const char*)&matBT.mat[c * matBT.rowSpan + pos],
+        //                _MM_HINT_T1);
+        //        }
+        //    }
+        //}
         for (int blockRowC = rowC; blockRowC < rowC + issuedBlockSzY; blockRowC += L2BlockY) {
             for (int blockRow = 0; blockRow < L2BlockY; blockRow += 3) {
                 for (int blockCol = 0; blockCol < L2BlockX; blockCol += 3) {
@@ -836,24 +839,28 @@ __declspec(noalias) void MMHelper_MultFullBlocks(float* __restrict const matData
                     __m256 c9 = _mm256_setzero_ps();
                     
                     /* 64 byte cache line -> 2x8f prefetch */
-                    _mm_prefetch((const char*)&matA.mat[matAoffset1], _MM_HINT_T0);
-                    _mm_prefetch((const char*)&matA.mat[matAoffset2], _MM_HINT_T0);
-                    _mm_prefetch((const char*)&matA.mat[matAoffset3], _MM_HINT_T0);
+                    if constexpr(doL12Prefetch) {
+                        _mm_prefetch((const char*)&matA.mat[matAoffset1], _MM_HINT_T0);
+                        _mm_prefetch((const char*)&matA.mat[matAoffset2], _MM_HINT_T0);
+                        _mm_prefetch((const char*)&matA.mat[matAoffset3], _MM_HINT_T0);
 
-                    _mm_prefetch((const char*)&matBT.mat[matBToffset1], _MM_HINT_T0);
-                    _mm_prefetch((const char*)&matBT.mat[matBToffset2], _MM_HINT_T0);
-                    _mm_prefetch((const char*)&matBT.mat[matBToffset3], _MM_HINT_T0);
+                        _mm_prefetch((const char*)&matBT.mat[matBToffset1], _MM_HINT_T0);
+                        _mm_prefetch((const char*)&matBT.mat[matBToffset2], _MM_HINT_T0);
+                        _mm_prefetch((const char*)&matBT.mat[matBToffset3], _MM_HINT_T0);
+                    }
 
                     /* 0.75 arithmetic intensity, 6 loads (3 a, 3 b) -> 9 fma instructions. */
                     for (int pos = 0; pos < matA.width; pos += 8) {
-                        if (!(pos & (unsigned)15)) {
-                            _mm_prefetch((const char*)&matA.mat[matAoffset1 + pos + 16], _MM_HINT_T0);
-                            _mm_prefetch((const char*)&matA.mat[matAoffset2 + pos + 16], _MM_HINT_T0);
-                            _mm_prefetch((const char*)&matA.mat[matAoffset3 + pos + 16], _MM_HINT_T0);
+                        if constexpr(doL12Prefetch) {
+                            if ((pos & (unsigned)15)) {
+                                _mm_prefetch((const char*)&matA.mat[matAoffset1 + pos + 8], _MM_HINT_T0);
+                                _mm_prefetch((const char*)&matA.mat[matAoffset2 + pos + 8], _MM_HINT_T0);
+                                _mm_prefetch((const char*)&matA.mat[matAoffset3 + pos + 8], _MM_HINT_T0);
 
-                            _mm_prefetch((const char*)&matBT.mat[matBToffset1 + pos + 16], _MM_HINT_T0);
-                            _mm_prefetch((const char*)&matBT.mat[matBToffset2 + pos + 16], _MM_HINT_T0);
-                            _mm_prefetch((const char*)&matBT.mat[matBToffset3 + pos + 16], _MM_HINT_T0);
+                                _mm_prefetch((const char*)&matBT.mat[matBToffset1 + pos + 8], _MM_HINT_T0);
+                                _mm_prefetch((const char*)&matBT.mat[matBToffset2 + pos + 8], _MM_HINT_T0);
+                                _mm_prefetch((const char*)&matBT.mat[matBToffset3 + pos + 8], _MM_HINT_T0);
+                            }
                         }
 
                         /* 6 8f vector loads */
@@ -944,30 +951,33 @@ __declspec(noalias) const Mat MTMatMul(const Mat& matA, const Mat& matB)
 
     /* initialize the HWLocalThreadPool with 2 threads per physical core
     * and 6 physical cores */
-    HWLocalThreadPool<6, 1> tp;
+    HWLocalThreadPool<6, 2> tp;
 
 
     /* !!! decide the block sizes for the given matrix and CPU */
     const float invN = 1.0 / matA.rowSpan;
-    int L2BlockX = (int)((invN * (float)((L2Size >> 1) / sizeof(float))) / 3) * 3;
-    int L2BlockY = L2BlockX;
-    int issuedBlockSzX = 6 * L2BlockX;
-    int issuedBlockSzY = 6 * L2BlockY;
-    int L3BlockX = ((int)(invN*(float)((L3Size >> 1) / sizeof(float))) / (L2BlockX * 2 * issuedBlockSzX))*(L2BlockX * 2 * issuedBlockSzX);
-    int L3BlockY = L3BlockX;
 
-    printf("%d %d\n", L2BlockX, L3BlockY);
+    int L3BlockX = min(min(((int)(invN*(float)((L3Size >> 1) / sizeof(float))) / (60))*(60), 240), matA.width/60*60);
+    int L3BlockY = L3BlockX;
+    int L2BlockX = max(min((int)((invN * (float)((L2Size >> 1) / sizeof(float))) / 3) * 3, 30), 3);
+    printf("%d\n", L2BlockX);
+    int L2BlockY = L2BlockX;
+    int issuedBlockSzX = L3BlockX / 4 / L2BlockX * L2BlockX;
+    int issuedBlockSzY = L3BlockY/4/L2BlockY*L2BlockY;
+
+    printf("%d %d %d %d\n", L2BlockX, issuedBlockSzX, issuedBlockSzY, L3BlockX);
 
     /* for now set these manually */
+    /* TODO: AUTO PARAMETER SELECTION, BENCHMARKING */
 
-    L2BlockX = 3;
-    L2BlockY = 3;
-    L3BlockX = 72;
-    L3BlockY = 72;
-    issuedBlockSzX = 24;
-    issuedBlockSzY = 36;
+    //L2BlockX = 3;
+    //L2BlockY = 3;
+    //L3BlockX = 120;
+    //L3BlockY = 120;
+    //issuedBlockSzX = 15;
+    //issuedBlockSzY = 15;
 
-    printf("%d %d\n", L2BlockX, L3BlockY);
+    printf("%d %d %d %d\n", L2BlockX, issuedBlockSzX, issuedBlockSzY, L3BlockX);
 
     MMBlockInfo mmBlockInfo{L3BlockX, L3BlockY, L2BlockX, L2BlockY, issuedBlockSzX , issuedBlockSzY};
 
@@ -1008,7 +1018,7 @@ __declspec(noalias) const Mat MTMatMul(const Mat& matA, const Mat& matB)
         for (; largeBlockColC <= (int)matB.width - L3BlockX; largeBlockColC += L3BlockX) {
             /* Issue issuedBlockSz x issuedBlockSz sized blocks */
             for (int blockRowC = largeBlockRowC; blockRowC < largeBlockRowC + L3BlockY; blockRowC += issuedBlockSzY) {
-                for (int blockColC = largeBlockColC; blockColC < largeBlockColC + L3BlockX; blockColC += issuedBlockSzX) {
+                for (int blockColC = largeBlockColC; blockColC < largeBlockColC + L3BlockX; blockColC += 2*issuedBlockSzX) {
                     tp.Add({HWLocalThreadPool<>::WrapFunc(
                               MMHelper_MultFullBlocks, matData, matB.rowSpan, matA,
                               matBT, blockColC, blockRowC, mmBlockInfo),
@@ -1023,7 +1033,7 @@ __declspec(noalias) const Mat MTMatMul(const Mat& matA, const Mat& matB)
             const unsigned remSubX = (matB.width - largeBlockColC) / 2;
             tp.Add({HWLocalThreadPool<>::WrapFunc(
                       MMHelper_MultRemBlocks, matData, matB.rowSpan, matA, matBT,
-                      largeBlockColC, largeBlockRowC, matB.width - largeBlockColC, L3BlockY, mmBlockInfo),
+                      largeBlockColC, largeBlockRowC, remSubX, L3BlockY, mmBlockInfo),
                     HWLocalThreadPool<>::WrapFunc(
                       MMHelper_MultRemBlocks, matData, matB.rowSpan, matA, matBT,
                       largeBlockColC + remSubX, largeBlockRowC,
@@ -1033,7 +1043,7 @@ __declspec(noalias) const Mat MTMatMul(const Mat& matA, const Mat& matB)
     int largeBlockColC = 0;
     /* handle last row, h < L3Y */
     /* first handle blocks of w = L3X, h < L3Y */
-    for (; largeBlockColC <= (int)matB.width - L3BlockX; largeBlockColC += L2BlockX) {
+    for (; largeBlockColC <= (int)matB.width - L3BlockX; largeBlockColC += 2*L2BlockX) {
         tp.Add({HWLocalThreadPool<>::WrapFunc(
                     MMHelper_MultRemBlocks, matData, matB.rowSpan, matA, matBT,
                     largeBlockColC, largeBlockRowC, L2BlockX,
@@ -1067,9 +1077,9 @@ __declspec(noalias) const Mat MTMatMul(const Mat& matA, const Mat& matB)
 const Mat MatMul(const Mat& matA, const Mat& matB)
 {
     /* A:  a,b B: b,c => # of op: a*b*b*c */
-    //if (matA.height*matA.width*matA.width*matB.width < 125000000) {
-    //    return ST_TransposedBMatMul(matA, matB);
-    //}
+    if (matA.height*matA.width*matB.width < 350*350*350) {
+        return ST_TransposedBMatMul(matA, matB);
+    }
     return MTMatMul(matA, matB);
 }
 
@@ -1084,20 +1094,22 @@ int __cdecl main(int argc, char* argv[])
     //const char* inputMtxBFile = argv[2];
     //const char* outMtxABFile = argv[3];
 
-    const char* inputMtxAFile = "matrixA.bin";
-    const char* inputMtxBFile = "matrixB.bin";
+    const char* inputMtxAFile = "matrixA11000.bin";
+    const char* inputMtxBFile = "matrixB11000.bin";
     const char* outMtxABFile = "matrixAB-out.bin";
 
     const Mat inputMtxA = LoadMat(inputMtxAFile);
     const Mat inputMtxB = LoadMat(inputMtxBFile);
 
-    printf("%d\n", inputMtxA.width);
+    printf("%d %d %d %d\n", inputMtxA.height, inputMtxA.width, inputMtxB.height, inputMtxB.width);
 
     auto start = std::chrono::high_resolution_clock::now();
 
-    const Mat outMtxAB = MTMatMul(inputMtxA, inputMtxB);
+    const Mat outMtxAB = MatMul(inputMtxA, inputMtxB);
 
     auto end = std::chrono::high_resolution_clock::now();
+    
+    printf("%d %d\n", outMtxAB.height, outMtxAB.width);
 
     std::cout
       << "Matrix Multiplication: "
