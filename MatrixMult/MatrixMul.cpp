@@ -851,15 +851,11 @@ __declspec(noalias) void MMHelper_MultFullBlocks(float* __restrict const matData
 
                     /* 0.75 arithmetic intensity, 6 loads (3 a, 3 b) -> 9 fma instructions. */
                     for (int pos = 0; pos < matA.width; pos += 8) {
+
                         if constexpr(doL12Prefetch) {
                             if ((pos & (unsigned)15)) {
-                                _mm_prefetch((const char*)&matA.mat[matAoffset1 + pos + 8], _MM_HINT_T0);
-                                _mm_prefetch((const char*)&matA.mat[matAoffset2 + pos + 8], _MM_HINT_T0);
-                                _mm_prefetch((const char*)&matA.mat[matAoffset3 + pos + 8], _MM_HINT_T0);
-
                                 _mm_prefetch((const char*)&matBT.mat[matBToffset1 + pos + 8], _MM_HINT_T0);
                                 _mm_prefetch((const char*)&matBT.mat[matBToffset2 + pos + 8], _MM_HINT_T0);
-                                _mm_prefetch((const char*)&matBT.mat[matBToffset3 + pos + 8], _MM_HINT_T0);
                             }
                         }
 
@@ -868,18 +864,43 @@ __declspec(noalias) void MMHelper_MultFullBlocks(float* __restrict const matData
                         a2 = _mm256_load_ps(&matA.mat[matAoffset2 + pos]);
                         a3 = _mm256_load_ps(&matA.mat[matAoffset3 + pos]);
 
+                        if constexpr(doL12Prefetch) {
+                            if ((pos & (unsigned)15)) {
+                                _mm_prefetch((const char*)&matBT.mat[matBToffset3 + pos + 8], _MM_HINT_T0);
+                            }
+                        }
+
                         b1 = _mm256_load_ps(&matBT.mat[matBToffset1 + pos]);
                         b2 = _mm256_load_ps(&matBT.mat[matBToffset2 + pos]);
                         b3 = _mm256_load_ps(&matBT.mat[matBToffset3 + pos]);
+
+                        if constexpr(doL12Prefetch) {
+                            if ((pos & (unsigned)15)) {
+                                _mm_prefetch((const char*)&matA.mat[matAoffset1 + pos + 8], _MM_HINT_T0);
+                            }
+                        }
 
                         /* 9 fma instructions */
                         c1 = _mm256_fmadd_ps(a1, b1, c1);
                         c2 = _mm256_fmadd_ps(a1, b2, c2);
                         c3 = _mm256_fmadd_ps(a1, b3, c3);
 
+
+                        if constexpr(doL12Prefetch) {
+                            if ((pos & (unsigned)15)) {
+                                _mm_prefetch((const char*)&matA.mat[matAoffset2 + pos + 8], _MM_HINT_T0);
+                            }
+                        }
+
                         c4 = _mm256_fmadd_ps(a2, b1, c4);
                         c5 = _mm256_fmadd_ps(a2, b2, c5);
                         c6 = _mm256_fmadd_ps(a2, b3, c6);
+
+                        if constexpr(doL12Prefetch) {
+                            if ((pos & (unsigned)15)) {
+                                _mm_prefetch((const char*)&matA.mat[matAoffset3 + pos + 8], _MM_HINT_T0);
+                            }
+                        }
 
                         c7 = _mm256_fmadd_ps(a3, b1, c7);
                         c8 = _mm256_fmadd_ps(a3, b2, c8);
@@ -970,12 +991,12 @@ __declspec(noalias) const Mat MTMatMul(const Mat& matA, const Mat& matB)
     /* for now set these manually */
     /* TODO: AUTO PARAMETER SELECTION, BENCHMARKING */
 
-    //L2BlockX = 3;
-    //L2BlockY = 3;
-    //L3BlockX = 120;
-    //L3BlockY = 120;
-    //issuedBlockSzX = 15;
-    //issuedBlockSzY = 15;
+    L2BlockX = 3;
+    L2BlockY = 3;
+    L3BlockX = 60;
+    L3BlockY = 60;
+    issuedBlockSzX = 15;
+    issuedBlockSzY = 15;
 
     printf("%d %d %d %d\n", L2BlockX, issuedBlockSzX, issuedBlockSzY, L3BlockX);
 
@@ -1070,10 +1091,6 @@ __declspec(noalias) const Mat MTMatMul(const Mat& matA, const Mat& matB)
     return matC;
 }
 
-/*
-* EDIT: --NEEDS MORE TUNING--
-* A very, very simple toggle between two functions depending on the total number of ops
-*/
 const Mat MatMul(const Mat& matA, const Mat& matB)
 {
     /* A:  a,b B: b,c => # of op: a*b*b*c */
