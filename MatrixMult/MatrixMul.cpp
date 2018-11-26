@@ -21,15 +21,19 @@
 /* Define for AVX alignment requirements */
 #define AVX_ALIGN 32
 
+/* Define L2 and L3 cache sizes needed to compute the optimal block sizes */
 constexpr unsigned L2Size = 256 * 1024;
 constexpr unsigned L3Size = 12 * 1024 * 1024;
+constexpr unsigned cacheLineSz = 64;
 
+/* Prefetching switches, if multiple MatMul operations are intended to run in parallel,
+ * individual mutexes should be created for each one. */
 constexpr int doL3Prefetch = 0;
 constexpr int doL12Prefetch = 0;
 int prefetched[1024][1024];
 std::mutex prefetchMutex;
-constexpr unsigned cacheLineSz = 64;
 
+/* Matrix structure */
 typedef struct Mat {
     unsigned width;
     unsigned height;
@@ -40,18 +44,19 @@ typedef struct Mat {
 } Mat;
 
 /* This struct holds the information for multiple levels of block sizes.
-* Constraints on block sizes:
-* L2BlockX % 3 == L2BlockY % 3 == 0,
-* L3BlockX % 2 == L3BlockY % 2 == 0,
-* (L3BlockX / 2) % L2BlockX == 0 */
+ * It's used to keep function parameters short and readable
+ * Constraints on block sizes:
+ * L2BlockX % 3 == L2BlockY % 4 == 0,
+ * L3BlockX % 2 == L3BlockY % 2 == 0,
+ * (L3BlockX / 2) % L2BlockX == 0  
+ */
 typedef struct MMBlockInfo {
-    const unsigned L3BlockX = 60, L3BlockY = 45;
-    const unsigned L2BlockX = 3, L2BlockY = 3;
-    const unsigned issuedBlockSzX = 30;
-    const unsigned issuedBlockSzY = 15;
+    const unsigned L3BlockX, L3BlockY;
+    const unsigned L2BlockX, L2BlockY;
+    const unsigned issuedBlockSzX, issuedBlockSzY;
 } MMBlockInfo;
 
-/* This function loads a previously saved matrix from disk */
+/* Load a previously saved matrix from disk */
 const Mat LoadMat(const char* const filename)
 {
     Mat mat;
@@ -76,7 +81,7 @@ const Mat LoadMat(const char* const filename)
     return mat;
 }
 
-/* This function dumps the given matrix to the disk. */
+/* Dump the given matrix to the disk. */
 static void DumpMat(const char* filename, const Mat& m)
 {
     uint32_t header[16];
@@ -93,15 +98,15 @@ static void DumpMat(const char* filename, const Mat& m)
     out.close();
 }
 
-/* This function rounds a given number to the nearest multiple of K,
+/* Round a given number to the nearest multiple of K,
 * where K is a parameter and is a power of 2 */
 static unsigned RoundUpPwr2(unsigned val, unsigned pwr2)
 {
     return (val + (pwr2 - 1)) & (~(pwr2 - 1));
 }
 
-/* This function computes the transpose of a given matrix.
-* It currently uses a singlethreaded implementation. */
+/* Compute the transpose of a given matrix.
+ * Currently a singlethreaded, implementation without blocking. */
 __declspec(noalias) const Mat TransposeMat(const Mat& mat)
 {
     const unsigned tRowSpan = RoundUpPwr2(mat.height, 64 / sizeof(float));
@@ -120,7 +125,7 @@ __declspec(noalias) const Mat TransposeMat(const Mat& mat)
     return T;
 }
 
-/* This function prints the given matrix to given std::ostream */
+/* Print the given matrix to given std::ostream */
 static void PrintMat(const Mat& mat, std::ostream& stream)
 {
     stream << "w, h, rS: " << mat.width << " " << mat.height << "  " << mat.rowSpan
@@ -133,6 +138,9 @@ static void PrintMat(const Mat& mat, std::ostream& stream)
     }
 }
 
+/**************** Naive, initial implementations ****************/
+
+/* Naive MatMul */
 const Mat ST_NaiveMatMul(const Mat& matA, const Mat& matB)
 {
     /* First : naive solution with but with some tricks to make compiler (MVC) behave
@@ -145,7 +153,7 @@ const Mat ST_NaiveMatMul(const Mat& matA, const Mat& matB)
 
     for (int rowC = 0; rowC < matA.height; ++rowC) {
         for (int colC = 0; colC < matB.width; ++colC) {
-            // have a local accumulator, o.w compiler fetches the value at each += operator.
+            // an independent, local accumulator.
             float accumulate = 0;
             int pos = 0;
             // interestingly, manual unrolling IS helpful, it takes 1000x1000 multiplication from about 990ms to 710ms
@@ -170,11 +178,14 @@ const Mat ST_NaiveMatMul(const Mat& matA, const Mat& matB)
     return matC;
 }
 
+/* MatMul with transposed B for improved cache behavior. */
 const Mat ST_TransposedBMatMul(const Mat& matA, const Mat& matB)
 {
-    /* Now, I thought transposing B and then traversing it row order would help and it does!
-    * Also, note that, if we manually unrolled the loop here, compiler wouldn't vectorize the loop for some reason
-    * (1301: Loop stride is not +1.) is the exact compiler message. */
+    /* Now, transposing B and then traversing it row order seemed promising!
+     * Also, note that, if we manually unrolled the loop here, 
+     * compiler wouldn't vectorize the loop, 
+     * so we keep it simple and let MSVC auto vectorize this.
+     */
     float* __restrict const matData =
       (float*)_aligned_malloc(matA.height * matB.rowSpan * sizeof(float), AVX_ALIGN);
 
@@ -197,6 +208,10 @@ const Mat ST_TransposedBMatMul(const Mat& matA, const Mat& matB)
     return matC;
 }
 
+/* MatMul with a different traveral order. 
+ * Instead of linearly running thru whole rows of output matrix C, 
+ * calculate blocks of a certain size at a time. 
+ */
 const Mat ST_BlockMult(const Mat& matA, const Mat& matB)
 {
     /* Now, once we fetch column col from B, we use these cached values
@@ -272,45 +287,60 @@ const Mat ST_BlockMult(const Mat& matA, const Mat& matB)
     return matC;
 }
 
+/************** ~~Naive, initial implementations~~ **************/
+
+/* Declerations for helper functions for the final implementation */
+
+__declspec(noalias) void MMHelper_MultAnyBlocks(float* __restrict const matData,
+                                                const unsigned rowSpan, const Mat& matA,
+                                                const Mat& matBT, const unsigned colC,
+                                                const unsigned rowC, const int blockX,
+                                                const int blockY,
+                                                const MMBlockInfo& mmBlockInfo);
+
 __declspec(noalias) void MMHelper_MultL2Blocks(float* __restrict const matData,
-    const unsigned rowSpan,
-    const Mat& matA, const Mat& matBT,
-    const unsigned blockColC, const unsigned blockRowC,
-    const unsigned L2BlockX, const unsigned L2BlockY);
+                                               const unsigned rowSpan, const Mat& matA,
+                                               const Mat& matBT, const unsigned col,
+                                               const unsigned row,
+                                               const unsigned L2BlockX,
+                                               const unsigned L2BlockY);
+
+__declspec(noalias) void MMHelper_MultFullBlocks(float* __restrict const matData,
+                                                 const unsigned rowSpan,
+                                                 const Mat& matA, const Mat& matBT,
+                                                 const unsigned colC,
+                                                 const unsigned rowC,
+                                                 const MMBlockInfo& mmBlockInfo);
+
+/* Declarations for helper functions that handle NxM blocks */
 
 __declspec(noalias) void MMHelper_Mult4x3Blocks(float* __restrict const matData,
-    const unsigned rowSpan,
-    const Mat& matA, const Mat& matBT,
-    const unsigned col,
-    const unsigned row);
+                                                const unsigned rowSpan, const Mat& matA,
+                                                const Mat& matBT, const unsigned col,
+                                                const unsigned row);
 __declspec(noalias) void MMHelper_Mult4x1Blocks(float* __restrict const matData,
-    const unsigned rowSpan,
-    const Mat& matA, const Mat& matBT,
-    const unsigned col,
-    const unsigned row);
+                                                const unsigned rowSpan, const Mat& matA,
+                                                const Mat& matBT, const unsigned col,
+                                                const unsigned row);
 __declspec(noalias) void MMHelper_Mult1x3Blocks(float* __restrict const matData,
-    const unsigned rowSpan,
-    const Mat& matA, const Mat& matBT,
-    const unsigned col,
-    const unsigned row);
+                                                const unsigned rowSpan, const Mat& matA,
+                                                const Mat& matBT, const unsigned col,
+                                                const unsigned row);
 __declspec(noalias) void MMHelper_Mult1x1Blocks(float* __restrict const matData,
-    const unsigned rowSpan,
-    const Mat& matA, const Mat& matBT,
-    const unsigned col,
-    const unsigned row);
+                                                const unsigned rowSpan, const Mat& matA,
+                                                const Mat& matBT, const unsigned col,
+                                                const unsigned row);
 
-/* This function handles blocks smaller than full sized L3X x L3Y blocks.
-* It is placed farther from the actual hot code. For the full sized blocks,
-* go to MMHelper_MultFullBlocks. The block handled here is defined as
-* next blockX cols and blockY rows from top left:
-* (rowC, colC) to (rowC+blockY-1, colC+blockX-1)
-* blockX and blockY need to be smaller than L3BlockX and L3BlockY respectively.
-* This requirement however, is not asserted. */
-__declspec(noalias) void MMHelper_MultArbitraryBlocks(float* __restrict const matData,
-                                                const unsigned rowSpan, 
-                                                const Mat& matA, const Mat& matBT, 
-                                                const unsigned colC, const unsigned rowC,
-                                                const int blockX, const int blockY,
+/* Helper function for computing a block out of the output matrix C.
+ * This function is used for the residues at the edges 
+ * after the majority of the matrix is computed as KxK sized blocks.
+ * (t,l,b,r)->(row, col, row+blockY, col+blockX). 
+ */
+__declspec(noalias) void MMHelper_MultAnyBlocks(float* __restrict const matData,
+                                                const unsigned rowSpan, const Mat& matA,
+                                                const Mat& matBT, const unsigned colC,
+                                                const unsigned rowC, const int blockX,
+                                                const int blockY,
                                                 const MMBlockInfo& mmBlockInfo)
 {
     /* if no work to be done, exit */
@@ -327,21 +357,23 @@ __declspec(noalias) void MMHelper_MultArbitraryBlocks(float* __restrict const ma
         int blockColC = colC;
         /* handle (L2X x L2Y) blocks */
         for (; blockColC <= colC + blockX - L2BlockX; blockColC += L2BlockX) {
-            MMHelper_MultL2Blocks(matData, rowSpan, matA, matBT, blockColC, blockRowC, L2BlockX, L2BlockY);
+            MMHelper_MultL2Blocks(matData, rowSpan, matA, matBT, blockColC, blockRowC,
+                                  L2BlockX, L2BlockY);
         }
         /* handle the remaining columns, (w<L2X, h=L2Y) */
-        for (int blockRow = blockRowC; blockRow < blockRowC+L2BlockY; blockRow += 4) {
+        for (int blockRow = blockRowC; blockRow < blockRowC + L2BlockY; blockRow += 4) {
             int blockCol = blockColC;
             if ((colC + blockX - blockColC) > 4) {
                 for (; blockCol <= colC + blockX - 3; blockCol += 3) {
-                    MMHelper_Mult4x3Blocks(matData, rowSpan, matA, matBT, blockCol, blockRow);
+                    MMHelper_Mult4x3Blocks(matData, rowSpan, matA, matBT, blockCol,
+                                           blockRow);
                 }
             }
             for (; blockCol < colC + blockX; ++blockCol) {
-                MMHelper_Mult4x1Blocks(matData, rowSpan, matA, matBT, blockCol, blockRow);
+                MMHelper_Mult4x1Blocks(matData, rowSpan, matA, matBT, blockCol,
+                                       blockRow);
             }
         }
-
     }
     /* handle rest of the rows, h<L2Y, h%4=0 */
     for (; blockRowC <= rowC + blockY - 4; blockRowC += 4) {
@@ -349,7 +381,8 @@ __declspec(noalias) void MMHelper_MultArbitraryBlocks(float* __restrict const ma
         /* handle (L2X x h<L2Y), h%4==0 blocks */
         for (; blockColC <= colC + blockX - L2BlockX; blockColC += L2BlockX) {
             for (int blockCol = 0; blockCol < L2BlockX; blockCol += 3) {
-                MMHelper_Mult4x3Blocks(matData, rowSpan, matA, matBT, blockColC+blockCol, blockRowC);
+                MMHelper_Mult4x3Blocks(matData, rowSpan, matA, matBT,
+                                       blockColC + blockCol, blockRowC);
             }
         }
         /* handle remanining columns (w<L2X x h<L2Y), h%4==0 */
@@ -363,7 +396,8 @@ __declspec(noalias) void MMHelper_MultArbitraryBlocks(float* __restrict const ma
         /* handle (L2X x h<3) blocks */
         for (; blockColC <= colC + blockX - L2BlockX; blockColC += L2BlockX) {
             for (int blockCol = 0; blockCol < L2BlockX; blockCol += 3) {
-                MMHelper_Mult1x3Blocks(matData, rowSpan, matA, matBT, blockColC+blockCol, blockRowC);                
+                MMHelper_Mult1x3Blocks(matData, rowSpan, matA, matBT,
+                                       blockColC + blockCol, blockRowC);
             }
         }
         /* handle remanining columns (w<L2X x h<3) */
@@ -373,23 +407,24 @@ __declspec(noalias) void MMHelper_MultArbitraryBlocks(float* __restrict const ma
     }
 }
 
+/* Calculates the dot product corresponding to a single entry in matrix C. */
 __declspec(noalias) void MMHelper_Mult1x1Blocks(float* __restrict const matData,
-    const unsigned rowSpan,
-    const Mat& matA, const Mat& matBT,
-    const unsigned col,
-    const unsigned row)
+                                                const unsigned rowSpan, const Mat& matA,
+                                                const Mat& matBT, const unsigned col,
+                                                const unsigned row)
 {
+    /* scalar accumulator */
     __declspec(align(32)) float fps;
 
     const unsigned matAoffset = row * matA.rowSpan;
     const unsigned matBToffset = col * matBT.rowSpan;
 
-    /* set up accumulators */
+    /* SIMD accumulators */
     __m256 a11, a12, a21, a22, a31, a32, b1, b2;
     __m256 c1 = _mm256_setzero_ps();
     __m256 c2 = _mm256_setzero_ps();
 
-    /* now we only handle 1 x 1 rows,
+    /* handle 1 x 1 rows, 2x8f vectors at a time
     * <--------- A.w -------->
     * [---- [a11] [a12] ---- ]
     * [---- [b1 ] [ b2] ---- ]
@@ -413,19 +448,22 @@ __declspec(noalias) void MMHelper_Mult1x1Blocks(float* __restrict const matData,
     matData[row * rowSpan + col] = fps;
 }
 
+/* Calculates a 1x3 block on the matrix C, (t,l,b,r)->(row,col,row+1,col+3) */
 __declspec(noalias) void MMHelper_Mult1x3Blocks(float* __restrict const matData,
-    const unsigned rowSpan,
-    const Mat& matA, const Mat& matBT,
-    const unsigned col,
-    const unsigned row)
+                                                const unsigned rowSpan, const Mat& matA,
+                                                const Mat& matBT, const unsigned col,
+                                                const unsigned row)
 {
+    /* set up scalar array and accumulators for doing the horizontal sum (__m256 -> f32)
+     * and storing its value. Horizontal sum is auto-vectorized by the compiler anyways. */
     __declspec(align(32)) float fps[8 * 3];
     __declspec(align(32)) float accumulate[3];
 
+    /* we will be reusing these */
     const unsigned matAoffset = row * matA.rowSpan;
     const unsigned matBToffset1 = (col + 0) * matBT.rowSpan,
-        matBToffset2 = (col + 1) * matBT.rowSpan,
-        matBToffset3 = (col + 2) * matBT.rowSpan;
+                   matBToffset2 = (col + 1) * matBT.rowSpan,
+                   matBToffset3 = (col + 2) * matBT.rowSpan;
 
     /* set up accumulators */
     __m256 a1, b1, b2, b3;
@@ -434,14 +472,12 @@ __declspec(noalias) void MMHelper_Mult1x3Blocks(float* __restrict const matData,
     __m256 c3 = _mm256_setzero_ps();
 
     for (int pos = 0; pos < matA.width; pos += 8) {
-        /* 6 8f vector loads */
         a1 = _mm256_load_ps(&matA.mat[matAoffset + pos]);
 
         b1 = _mm256_load_ps(&matBT.mat[matBToffset1 + pos]);
         b2 = _mm256_load_ps(&matBT.mat[matBToffset2 + pos]);
         b3 = _mm256_load_ps(&matBT.mat[matBToffset3 + pos]);
 
-        /* 9 fma instructions */
         c1 = _mm256_fmadd_ps(a1, b1, c1);
         c2 = _mm256_fmadd_ps(a1, b2, c2);
         c3 = _mm256_fmadd_ps(a1, b3, c3);
@@ -455,6 +491,7 @@ __declspec(noalias) void MMHelper_Mult1x3Blocks(float* __restrict const matData,
     _mm256_store_ps(&fps[8], c2);
     _mm256_store_ps(&fps[16], c3);
 
+    /* autovectorized */
     for (int i = 0; i < 3; ++i) {
         for (int j = 0; j < 8; ++j) {
             accumulate[i] += fps[i * 8 + j];
@@ -467,20 +504,21 @@ __declspec(noalias) void MMHelper_Mult1x3Blocks(float* __restrict const matData,
     matData[row * rowSpan + col + 2] = accumulate[2];
 }
 
+/* Calculates a 4x1 block on output matrix C. (t,l,b,r)->(row,col,row+4,col+1) */
 __declspec(noalias) void MMHelper_Mult4x1Blocks(float* __restrict const matData,
-    const unsigned rowSpan,
-    const Mat& matA, const Mat& matBT,
-    const unsigned col,
-    const unsigned row)
+                                                const unsigned rowSpan, const Mat& matA,
+                                                const Mat& matBT, const unsigned col,
+                                                const unsigned row)
 {
+    /* set up scalar array and accumulators for doing the horizontal sum (__m256 -> f32)
+    * and storing its value. Horizontal sum is auto-vectorized by the compiler anyways. */
     __declspec(align(32)) float fps[8 * 12];
     __declspec(align(32)) float accumulate[8 * 12];
 
-
     const unsigned matAoffset1 = (row + 0) * matA.rowSpan,
-        matAoffset2 = (row + 1) * matA.rowSpan,
-        matAoffset3 = (row + 2) * matA.rowSpan,
-        matAoffset4 = (row + 3) * matA.rowSpan;
+                   matAoffset2 = (row + 1) * matA.rowSpan,
+                   matAoffset3 = (row + 2) * matA.rowSpan,
+                   matAoffset4 = (row + 3) * matA.rowSpan;
 
     const unsigned matBToffset = col * matBT.rowSpan;
 
@@ -494,10 +532,6 @@ __declspec(noalias) void MMHelper_Mult4x1Blocks(float* __restrict const matData,
     __m256 c6 = _mm256_setzero_ps();
     __m256 c7 = _mm256_setzero_ps();
     __m256 c8 = _mm256_setzero_ps();
-
-    /* a and b's represent different segments,
-    * as they did in the previous one incremented loop.
-    * see (w<L2X, h=L2Y) case for more details. */
 
     for (int pos = 0; pos < matA.width; pos += 16) {
         a11 = _mm256_load_ps(&matA.mat[matAoffset1 + pos]);
@@ -540,33 +574,37 @@ __declspec(noalias) void MMHelper_Mult4x1Blocks(float* __restrict const matData,
     _mm256_store_ps(&fps[16], c3);
     _mm256_store_ps(&fps[24], c4);
 
+    /* autovectorized */
     for (int i = 0; i < 4; ++i) {
         for (int j = 0; j < 8; ++j) {
             accumulate[i] += fps[i * 8 + j];
         }
     }
 
+    /* stores */
     matData[(row + 0) * rowSpan + col] = accumulate[0];
     matData[(row + 1) * rowSpan + col] = accumulate[1];
     matData[(row + 2) * rowSpan + col] = accumulate[2];
     matData[(row + 3) * rowSpan + col] = accumulate[3];
 }
 
+/* Calculates a 4x3 block on output matrix C. (t,l,b,r)->(row,col,row+4,col+3) */
 __declspec(noalias) void MMHelper_Mult4x3Blocks(float* __restrict const matData,
-    const unsigned rowSpan,
-    const Mat& matA, const Mat& matBT,
-    const unsigned col,
-    const unsigned row)
+                                                const unsigned rowSpan, const Mat& matA,
+                                                const Mat& matBT, const unsigned col,
+                                                const unsigned row)
 {
+    /* aligned placeholders and accumulators */
     __declspec(align(32)) float fps[8 * 12];
+    __declspec(align(32)) float accumulate[12];
 
     const unsigned matAoffset1 = (row + 0) * matA.rowSpan,
-        matAoffset2 = (row + 1) * matA.rowSpan,
-        matAoffset3 = (row + 2) * matA.rowSpan,
-        matAoffset4 = (row + 3) * matA.rowSpan,
-        matBToffset1 = (col + 0) * matBT.rowSpan,
-        matBToffset2 = (col + 1) * matBT.rowSpan,
-        matBToffset3 = (col + 2) * matBT.rowSpan;
+                   matAoffset2 = (row + 1) * matA.rowSpan,
+                   matAoffset3 = (row + 2) * matA.rowSpan,
+                   matAoffset4 = (row + 3) * matA.rowSpan,
+                   matBToffset1 = (col + 0) * matBT.rowSpan,
+                   matBToffset2 = (col + 1) * matBT.rowSpan,
+                   matBToffset3 = (col + 2) * matBT.rowSpan;
 
     /* Visualization:
     *
@@ -597,8 +635,8 @@ __declspec(noalias) void MMHelper_Mult4x3Blocks(float* __restrict const matData,
     __m256 c11 = _mm256_setzero_ps();
     __m256 c12 = _mm256_setzero_ps();
 
-    /* 64 byte cache line -> 2x8f prefetch */
-    if constexpr(doL12Prefetch) {
+    /* 64 byte cache line -> 2x8f prefetch at a time */
+    if constexpr (doL12Prefetch) {
         _mm_prefetch((const char*)&matA.mat[matAoffset1], _MM_HINT_T0);
         _mm_prefetch((const char*)&matA.mat[matAoffset2], _MM_HINT_T0);
         _mm_prefetch((const char*)&matA.mat[matAoffset3], _MM_HINT_T0);
@@ -610,9 +648,10 @@ __declspec(noalias) void MMHelper_Mult4x3Blocks(float* __restrict const matData,
 
     /* 0.75 arithmetic intensity, 6 loads (3 a, 3 b) -> 9 fma instructions. */
     for (int pos = 0; pos < matA.width; pos += 8) {
-        if constexpr(doL12Prefetch) {
+        if constexpr (doL12Prefetch) {
             if ((pos & (unsigned)15)) {
-                _mm_prefetch((const char*)&matA.mat[matAoffset1 + pos + 8], _MM_HINT_T0);
+                _mm_prefetch((const char*)&matA.mat[matAoffset1 + pos + 8],
+                             _MM_HINT_T0);
             }
         }
 
@@ -620,9 +659,10 @@ __declspec(noalias) void MMHelper_Mult4x3Blocks(float* __restrict const matData,
         b2 = _mm256_load_ps(&matBT.mat[matBToffset2 + pos]);
         b3 = _mm256_load_ps(&matBT.mat[matBToffset3 + pos]);
 
-        if constexpr(doL12Prefetch) {
+        if constexpr (doL12Prefetch) {
             if ((pos & (unsigned)15)) {
-                _mm_prefetch((const char*)&matA.mat[matAoffset2 + pos + 8], _MM_HINT_T0);
+                _mm_prefetch((const char*)&matA.mat[matAoffset2 + pos + 8],
+                             _MM_HINT_T0);
             }
         }
 
@@ -631,9 +671,10 @@ __declspec(noalias) void MMHelper_Mult4x3Blocks(float* __restrict const matData,
         c2 = _mm256_fmadd_ps(a, b2, c2);
         c3 = _mm256_fmadd_ps(a, b3, c3);
 
-        if constexpr(doL12Prefetch) {
+        if constexpr (doL12Prefetch) {
             if ((pos & (unsigned)15)) {
-                _mm_prefetch((const char*)&matA.mat[matAoffset3 + pos + 8], _MM_HINT_T0);
+                _mm_prefetch((const char*)&matA.mat[matAoffset3 + pos + 8],
+                             _MM_HINT_T0);
             }
         }
         a = _mm256_load_ps(&matA.mat[matAoffset2 + pos]);
@@ -641,9 +682,10 @@ __declspec(noalias) void MMHelper_Mult4x3Blocks(float* __restrict const matData,
         c5 = _mm256_fmadd_ps(a, b2, c5);
         c6 = _mm256_fmadd_ps(a, b3, c6);
 
-        if constexpr(doL12Prefetch) {
+        if constexpr (doL12Prefetch) {
             if ((pos & (unsigned)15)) {
-                _mm_prefetch((const char*)&matA.mat[matAoffset4 + pos + 8], _MM_HINT_T0);
+                _mm_prefetch((const char*)&matA.mat[matAoffset4 + pos + 8],
+                             _MM_HINT_T0);
             }
         }
 
@@ -652,11 +694,14 @@ __declspec(noalias) void MMHelper_Mult4x3Blocks(float* __restrict const matData,
         c8 = _mm256_fmadd_ps(a, b2, c8);
         c9 = _mm256_fmadd_ps(a, b3, c9);
 
-        if constexpr(doL12Prefetch) {
+        if constexpr (doL12Prefetch) {
             if ((pos & (unsigned)15)) {
-                _mm_prefetch((const char*)&matBT.mat[matBToffset1 + pos + 8], _MM_HINT_T0);
-                _mm_prefetch((const char*)&matBT.mat[matBToffset2 + pos + 8], _MM_HINT_T0);
-                _mm_prefetch((const char*)&matBT.mat[matBToffset3 + pos + 8], _MM_HINT_T0);
+                _mm_prefetch((const char*)&matBT.mat[matBToffset1 + pos + 8],
+                             _MM_HINT_T0);
+                _mm_prefetch((const char*)&matBT.mat[matBToffset2 + pos + 8],
+                             _MM_HINT_T0);
+                _mm_prefetch((const char*)&matBT.mat[matBToffset3 + pos + 8],
+                             _MM_HINT_T0);
             }
         }
 
@@ -667,8 +712,6 @@ __declspec(noalias) void MMHelper_Mult4x3Blocks(float* __restrict const matData,
     }
 
     /* horizontal sum */
-
-    __declspec(align(32)) float accumulate[12];
     memset(&accumulate[0], 0, 12 * sizeof(float));
 
     _mm256_store_ps(&fps[0], c1);
@@ -708,46 +751,50 @@ __declspec(noalias) void MMHelper_Mult4x3Blocks(float* __restrict const matData,
     matData[(row + 3) * rowSpan + col + 2] = accumulate[11];
 }
 
-/* This function computes the L2Y x L2X sized block of the output matrix C.
+/* Compute L2Y x L2X sized blocks from the output matrix C.
 * In order to keep this code nice and hot in instruction cache,
 * keep it restricted to full blocks of L2X x L2Y.
-* See MMHelper_MultRemBlocks for handling of the edges */
+*/
 __declspec(noalias) void MMHelper_MultL2Blocks(float* __restrict const matData,
-    const unsigned rowSpan,
-    const Mat& matA, const Mat& matBT,
-    const unsigned blockColC, const unsigned blockRowC,
-    const unsigned L2BlockX, const unsigned L2BlockY)
+                                               const unsigned rowSpan, const Mat& matA,
+                                               const Mat& matBT, const unsigned col,
+                                               const unsigned row,
+                                               const unsigned L2BlockX,
+                                               const unsigned L2BlockY)
 {
-    for (int blockRow = blockRowC; blockRow < blockRowC+L2BlockY; blockRow += 4) {
-        for (int blockCol = blockColC; blockCol < blockColC+L2BlockX; blockCol += 3) {
+    for (int blockRow = row; blockRow < row + L2BlockY; blockRow += 4) {
+        for (int blockCol = col; blockCol < col + L2BlockX; blockCol += 3) {
             MMHelper_Mult4x3Blocks(matData, rowSpan, matA, matBT, blockCol, blockRow);
         }
     }
 }
 
+/* Compute K x K sized blocks from the output matrix C. see struct mmBlockInfo */
 __declspec(noalias) void MMHelper_MultFullBlocks(float* __restrict const matData,
-    const unsigned rowSpan,
-    const Mat& matA, const Mat& matBT,
-    const unsigned colC,
-    const unsigned rowC,
-    const MMBlockInfo& mmBlockInfo)
+                                                 const unsigned rowSpan,
+                                                 const Mat& matA, const Mat& matBT,
+                                                 const unsigned colC,
+                                                 const unsigned rowC,
+                                                 const MMBlockInfo& mmBlockInfo)
 {
     const unsigned L2BlockX = mmBlockInfo.L2BlockX, L2BlockY = mmBlockInfo.L2BlockY,
-        L3BlockX = mmBlockInfo.L3BlockX, L3BlockY = mmBlockInfo.L3BlockY,
-        issuedBlockSzX = mmBlockInfo.issuedBlockSzX,
-        issuedBlockSzY = mmBlockInfo.issuedBlockSzY;
+                   L3BlockX = mmBlockInfo.L3BlockX, L3BlockY = mmBlockInfo.L3BlockY,
+                   issuedBlockSzX = mmBlockInfo.issuedBlockSzX,
+                   issuedBlockSzY = mmBlockInfo.issuedBlockSzY;
 
     /* try to prefetch next L3 block into memory while still handling this one */
     {
         if constexpr (doL3Prefetch) {
             std::unique_lock<std::mutex> lock(prefetchMutex);
-            int alreadyPrefetchedCol = prefetched[rowC / L3BlockY][colC / issuedBlockSzX];
+            int alreadyPrefetchedCol =
+              prefetched[rowC / L3BlockY][colC / issuedBlockSzX];
             lock.unlock();
             if (!alreadyPrefetchedCol) {
-                for (int c = colC+ issuedBlockSzX; c < colC + issuedBlockSzX; ++c) {
-                    for (int pos = 0; pos < matA.rowSpan; pos += cacheLineSz / sizeof(float)) {
+                for (int c = colC + issuedBlockSzX; c < colC + issuedBlockSzX; ++c) {
+                    for (int pos = 0; pos < matA.rowSpan;
+                         pos += cacheLineSz / sizeof(float)) {
                         _mm_prefetch((const char*)&matBT.mat[c * matBT.rowSpan + pos],
-                            _MM_HINT_T2);
+                                     _MM_HINT_T2);
                     }
                 }
                 lock.lock();
@@ -757,16 +804,19 @@ __declspec(noalias) void MMHelper_MultFullBlocks(float* __restrict const matData
         }
     }
 
-    for (int blockColC = colC; blockColC < colC + issuedBlockSzX; blockColC += L2BlockX) {
-        for (int blockRowC = rowC; blockRowC < rowC + issuedBlockSzY; blockRowC += L2BlockY) {
-            MMHelper_MultL2Blocks(matData, rowSpan, matA, matBT, blockColC, blockRowC, L2BlockX, L2BlockY);
+    for (int blockColC = colC; blockColC < colC + issuedBlockSzX;
+         blockColC += L2BlockX) {
+        for (int blockRowC = rowC; blockRowC < rowC + issuedBlockSzY;
+             blockRowC += L2BlockY) {
+            MMHelper_MultL2Blocks(matData, rowSpan, matA, matBT, blockColC, blockRowC,
+                                  L2BlockX, L2BlockY);
         }
     }
 }
 
-
 /* This function divides the matrix multiplication into segments and
-* issues commands for a cache aware thread pool to handle them. */
+ * issues commands for a cache aware thread pool to handle them.
+ * Uses the helper functions above. */
 __declspec(noalias) const Mat MTMatMul(const Mat& matA, const Mat& matB)
 {
     /* allocate the aligned float array for our new matrix C */
@@ -783,75 +833,80 @@ __declspec(noalias) const Mat MTMatMul(const Mat& matA, const Mat& matB)
     * and 6 physical cores */
     HWLocalThreadPool<6, 2> tp;
 
-
     /* decide the block sizes for the given matrix and CPU */
     const float invN = 1.0 / matA.rowSpan;
 
-    int L3BlockX = min(min(((int)(invN*(float)((L3Size >> 1) / sizeof(float))) / (60))*(60), 240), matA.width/60*60);
+    int L3BlockX =
+      min(min(((int)(invN * (float)((L3Size / 2) / sizeof(float))) / (60)) * (60), 240),
+          matA.width / 60 * 60);
     int L3BlockY = L3BlockX;
-    int L2BlockX = max(min((int)((invN * (float)((L2Size >> 1) / sizeof(float))) / 3) * 3, 30), 3);
-    int L2BlockY = max(min((int)((invN * (float)((L2Size >> 1) / sizeof(float))) / 4) * 4, 40), 4);
+    int L2BlockX =
+      max(min((int)((invN * (float)((L2Size / 2) / sizeof(float))) / 3) * 3, 30), 3);
+    int L2BlockY =
+      max(min((int)((invN * (float)((L2Size / 2) / sizeof(float))) / 4) * 4, 40), 4);
     int issuedBlockSzX = L3BlockX / 4 / L2BlockX * L2BlockX;
     int issuedBlockSzY = L3BlockY / 3 / L2BlockY * L2BlockY;
 
-    printf("%d %d %d %d %d %d\n", L2BlockX, L2BlockY, issuedBlockSzX, issuedBlockSzY, L3BlockX, L3BlockY);
+    printf("%d %d %d %d %d %d\n", L2BlockX, L2BlockY, issuedBlockSzX, issuedBlockSzY,
+           L3BlockX, L3BlockY);
 
-    /* for now set these manually */
-    /* TODO: AUTO PARAMETER SELECTION, BENCHMARKING */
-
-    /*L2BlockX = 3;
-    L2BlockY = 4;
-    L3BlockX = 120;
-    L3BlockY = 120;
-    issuedBlockSzX = 30;
-    issuedBlockSzY = 40;*/
-
-    MMBlockInfo mmBlockInfo{L3BlockX, L3BlockY, L2BlockX, L2BlockY, issuedBlockSzX , issuedBlockSzY};
+    MMBlockInfo mmBlockInfo{L3BlockX, L3BlockY,       L2BlockX,
+                            L2BlockY, issuedBlockSzX, issuedBlockSzY};
 
     /* before we begin, start prefetching the first L3 level block */
+    /* reset the prefetched flags */
     memset(&prefetched[0][0], 0, 1024 * 1024 * sizeof(int));
+    /* prefetch rows of A and columns of B, one cache line at a time */
     for (int r = 0; r < L3BlockY; ++r) {
         for (int pos = 0; pos < matA.rowSpan; pos += cacheLineSz / sizeof(float)) {
-            _mm_prefetch((const char*)&matA.mat[r*matA.rowSpan + pos], _MM_HINT_T2);
+            _mm_prefetch((const char*)&matA.mat[r * matA.rowSpan + pos], _MM_HINT_T2);
         }
     }
     for (int c = 0; c < L3BlockX; ++c) {
         for (int pos = 0; pos < matA.rowSpan; pos += cacheLineSz / sizeof(float)) {
-            _mm_prefetch((const char*)&matBT.mat[c*matBT.rowSpan + pos], _MM_HINT_T2);
+            _mm_prefetch((const char*)&matBT.mat[c * matBT.rowSpan + pos], _MM_HINT_T2);
         }
     }
-    
+    /* prefetch is called for the first block, mark it. */
     prefetched[0][0]++;
 
     /* start issuing jobs for the thread pool */
 
     /*
-     * If we issue commands linearly, row major, we'll have poor L3 cache utilization.
-     * [ [C0T0 | C0T1] [C1T0 | C1T1] ... [C5T0 | C5T1] ]
-     * Instead we can issue commands in the blocked manner, like:
+     * We encorporate multiple levels of tiling into our traversal.
+     *
+     * If we issue commands linearly, we'll have poor L3 cache utilization.
+     * [ [C0T0 | C0T1] [C1T0 | C1T1] ... [C5T0 | C5T1] ] covering a rows, b columns,
+     * (a+b)N floats of data is needed to compute a*b sized block.
+     * So, instead, we issue commands in the blocked manner, like:
      * [ [C0T0 | C0T1] [C1T0 | C1T1] 
      *   [C2T0 | C5T1] [C2T0 | C2T1] ] 
-     * sizes of the issued blocks is another consideration, 
-     * we can issue any arbitrarily sized blocks, for now do L2
+     *
+     * Traverse L3 sized blocks, 
+     * inside each, traverse issuedBlockSz sized blocks.
      */
 
     int largeBlockRowC = 0;
     /* handle L3Y sized rows
-    * cast unsigned dimensions to signed to avoid UB
-    * for small matrices where N < L3 block size */
+     * cast unsigned dimensions to signed to avoid UB */
     for (; largeBlockRowC <= (int)matA.height - L3BlockY; largeBlockRowC += L3BlockY) {
         int largeBlockColC = 0;
-        /* handle L3X x L3Y sized blocks */
-        for (; largeBlockColC <= (int)matB.width - L3BlockX; largeBlockColC += L3BlockX) {
-            /* Issue issuedBlockSz x issuedBlockSz sized blocks */
-            for (int blockRowC = largeBlockRowC; blockRowC < largeBlockRowC + L3BlockY; blockRowC += issuedBlockSzY) {
-                for (int blockColC = largeBlockColC; blockColC < largeBlockColC + L3BlockX; blockColC += 2*issuedBlockSzX) {
-                    tp.Add({HWLocalThreadPool<>::WrapFunc(
-                              MMHelper_MultFullBlocks, matData, matB.rowSpan, matA,
-                              matBT, blockColC, blockRowC, mmBlockInfo),
-                            HWLocalThreadPool<>::WrapFunc(
-                              MMHelper_MultFullBlocks, matData, matB.rowSpan, matA,
-                              matBT, blockColC + issuedBlockSzX, blockRowC, mmBlockInfo)});
+        /* handle L3Y x L3X sized blocks */
+        for (; largeBlockColC <= (int)matB.width - L3BlockX;
+             largeBlockColC += L3BlockX) {
+            /* Issue issuedBlockSzY x issuedBlockSzX sized blocks */
+            for (int blockRowC = largeBlockRowC; blockRowC < largeBlockRowC + L3BlockY;
+                 blockRowC += issuedBlockSzY) {
+                for (int blockColC = largeBlockColC;
+                     blockColC < largeBlockColC + L3BlockX;
+                     blockColC += 2 * issuedBlockSzX) {
+                    tp.Add(
+                      {HWLocalThreadPool<>::WrapFunc(MMHelper_MultFullBlocks, matData,
+                                                     matB.rowSpan, matA, matBT,
+                                                     blockColC, blockRowC, mmBlockInfo),
+                       HWLocalThreadPool<>::WrapFunc(
+                         MMHelper_MultFullBlocks, matData, matB.rowSpan, matA, matBT,
+                         blockColC + issuedBlockSzX, blockRowC, mmBlockInfo)});
                 }
             }
         }
@@ -859,29 +914,30 @@ __declspec(noalias) const Mat MTMatMul(const Mat& matA, const Mat& matB)
         if (matB.width > largeBlockColC) {
             const unsigned remSubX = (matB.width - largeBlockColC) / 2;
             tp.Add({HWLocalThreadPool<>::WrapFunc(
-                MMHelper_MultArbitraryBlocks, matData, matB.rowSpan, matA, matBT,
+                      MMHelper_MultAnyBlocks, matData, matB.rowSpan, matA, matBT,
                       largeBlockColC, largeBlockRowC, remSubX, L3BlockY, mmBlockInfo),
                     HWLocalThreadPool<>::WrapFunc(
-                        MMHelper_MultArbitraryBlocks, matData, matB.rowSpan, matA, matBT,
+                      MMHelper_MultAnyBlocks, matData, matB.rowSpan, matA, matBT,
                       largeBlockColC + remSubX, largeBlockRowC,
                       matB.width - largeBlockColC - remSubX, L3BlockY, mmBlockInfo)});
         }
     }
-    int largeBlockColC = 0;
     /* handle last row, h < L3Y */
+    int largeBlockColC = 0;
     /* first handle blocks of w = L3X, h < L3Y */
-    for (; largeBlockColC <= (int)matB.width - L3BlockX; largeBlockColC += 2*L2BlockX) {
-        tp.Add({HWLocalThreadPool<>::WrapFunc(
-            MMHelper_MultArbitraryBlocks, matData, matB.rowSpan, matA, matBT,
-                    largeBlockColC, largeBlockRowC, L2BlockX,
-                    matA.height - largeBlockRowC, mmBlockInfo),
-                HWLocalThreadPool<>::WrapFunc(
-                    MMHelper_MultArbitraryBlocks, matData, matB.rowSpan, matA, matBT,
-                    largeBlockColC + L2BlockX, largeBlockRowC, L2BlockX,
-                    matA.height - largeBlockRowC, mmBlockInfo)});
+    for (; largeBlockColC <= (int)matB.width - L3BlockX;
+         largeBlockColC += 2 * issuedBlockSzX) {
+        tp.Add(
+          {HWLocalThreadPool<>::WrapFunc(
+             MMHelper_MultAnyBlocks, matData, matB.rowSpan, matA, matBT, largeBlockColC,
+             largeBlockRowC, issuedBlockSzX, matA.height - largeBlockRowC, mmBlockInfo),
+           HWLocalThreadPool<>::WrapFunc(MMHelper_MultAnyBlocks, matData, matB.rowSpan,
+                                         matA, matBT, largeBlockColC + issuedBlockSzX,
+                                         largeBlockRowC, issuedBlockSzX,
+                                         matA.height - largeBlockRowC, mmBlockInfo)});
     }
     /* now handle the rightmost block of w < L3X, h < L3Y */
-    tp.Add({HWLocalThreadPool<>::WrapFunc(MMHelper_MultArbitraryBlocks, matData, matB.rowSpan,
+    tp.Add({HWLocalThreadPool<>::WrapFunc(MMHelper_MultAnyBlocks, matData, matB.rowSpan,
                                           matA, matBT, largeBlockColC, largeBlockRowC,
                                           matB.width - largeBlockColC,
                                           matA.height - largeBlockRowC, mmBlockInfo),
@@ -897,10 +953,12 @@ __declspec(noalias) const Mat MTMatMul(const Mat& matA, const Mat& matB)
     return matC;
 }
 
+/* MatMul function, a simple branch that calls the proper implementation
+ * based on the complexity of the input matrix. */
 const Mat MatMul(const Mat& matA, const Mat& matB)
 {
-    /* A:  a,b B: b,c => # of op: a*b*b*c */
-    if (matA.height*matA.width*matB.width < 350*350*350) {
+    /* A:  a,b B: b,c => # of ops ~= 2*a*b*c */
+    if (matA.height * matA.width * matB.width < 350 * 350 * 350) {
         return ST_TransposedBMatMul(matA, matB);
     }
     return MTMatMul(matA, matB);
@@ -924,14 +982,15 @@ int __cdecl main(int argc, char* argv[])
     const Mat inputMtxA = LoadMat(inputMtxAFile);
     const Mat inputMtxB = LoadMat(inputMtxBFile);
 
-    printf("%d %d %d %d\n", inputMtxA.height, inputMtxA.width, inputMtxB.height, inputMtxB.width);
+    printf("%d %d %d %d\n", inputMtxA.height, inputMtxA.width, inputMtxB.height,
+           inputMtxB.width);
 
     auto start = std::chrono::high_resolution_clock::now();
 
     const Mat outMtxAB = MatMul(inputMtxA, inputMtxB);
 
     auto end = std::chrono::high_resolution_clock::now();
-    
+
     printf("%d %d\n", outMtxAB.height, outMtxAB.width);
 
     std::cout
