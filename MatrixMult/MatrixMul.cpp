@@ -99,6 +99,21 @@ static void DumpMat(const char* filename, const Mat& m)
     out.close();
 }
 
+/* Deallocate matrix data */
+void FreeMat(Mat& mat)
+{
+    if (!mat.mat)
+        return;
+    _aligned_free(mat.mat);
+    mat.mat = NULL;
+}
+void FreeMat(const Mat& mat)
+{
+    if (!mat.mat)
+        return;
+    _aligned_free(mat.mat);
+}
+
 /* Round a given number to the nearest multiple of K,
 * where K is a parameter and is a power of 2 */
 static unsigned RoundUpPwr2(unsigned val, unsigned pwr2)
@@ -880,8 +895,8 @@ __declspec(noalias) const Mat MTMatMul(const Mat& matA, const Mat& matB)
     int issuedBlockSzX = L3BlockX / 4 / L2BlockX * L2BlockX;
     int issuedBlockSzY = L3BlockY / 3 / L2BlockY * L2BlockY;
 
-    printf("%d %d %d %d %d %d\n", L2BlockX, L2BlockY, issuedBlockSzX, issuedBlockSzY,
-           L3BlockX, L3BlockY);
+    /*printf("%d %d %d %d %d %d\n", L2BlockX, L2BlockY, issuedBlockSzX, issuedBlockSzY,
+           L3BlockX, L3BlockY);*/
 
     MMBlockInfo mmBlockInfo{L3BlockX, L3BlockY,       L2BlockX,
                             L2BlockY, issuedBlockSzX, issuedBlockSzY};
@@ -933,13 +948,15 @@ __declspec(noalias) const Mat MTMatMul(const Mat& matA, const Mat& matB)
                 for (int blockColC = largeBlockColC;
                      blockColC < largeBlockColC + L3BlockX;
                      blockColC += jobStride * issuedBlockSzX) {
-                    tp.Add(
-                      {HWLocalThreadPool::WrapFunc(MMHelper_MultFullBlocks, matData,
+                    tp.Add({
+                        HWLocalThreadPool::WrapFunc(MMHelper_MultFullBlocks, matData,
                                                    matB.rowSpan, matA, matBT, blockColC,
                                                    blockRowC, mmBlockInfo),
-                       HWLocalThreadPool::WrapFunc(
-                         MMHelper_MultFullBlocks, matData, matB.rowSpan, matA, matBT,
-                         blockColC + issuedBlockSzX, blockRowC, mmBlockInfo)});
+                        HWLocalThreadPool::WrapFunc(MMHelper_MultFullBlocks, matData, 
+                                                   matB.rowSpan, matA, matBT,
+                                                   blockColC + issuedBlockSzX, blockRowC, 
+                                                   mmBlockInfo)
+                        });
                 }
             }
         }
@@ -1015,21 +1032,19 @@ int __cdecl main(int argc, char* argv[])
     const char* inputMtxBFile = argv[2];
     const char* outMtxABFile = argv[3];
 
-    //const char* inputMtxAFile = "matrixA9000.bin";
-    //const char* inputMtxBFile = "matrixB9000.bin";
+    //const char* inputMtxAFile = "matrixA1000.bin";
+    //const char* inputMtxBFile = "matrixB1000.bin";
     //const char* outMtxABFile = "matrixAB-out.bin";
 
     const Mat inputMtxA = LoadMat(inputMtxAFile);
     const Mat inputMtxB = LoadMat(inputMtxBFile);
 
-    printf("%d %d %d %d\n", inputMtxA.height, inputMtxA.width, inputMtxB.height,
-           inputMtxB.width);
+    /*printf("%d %d %d %d\n", inputMtxA.height, inputMtxA.width, inputMtxB.height,
+           inputMtxB.width);*/
 
     auto start = std::chrono::high_resolution_clock::now();
     const Mat outMtxAB = MatMul(inputMtxA, inputMtxB);
     auto end = std::chrono::high_resolution_clock::now();
-
-    printf("%d %d\n", outMtxAB.height, outMtxAB.width);
 
     std::cout
       << "Matrix Multiplication: "
@@ -1037,6 +1052,10 @@ int __cdecl main(int argc, char* argv[])
       << " microseconds.\n";
 
     DumpMat(outMtxABFile, outMtxAB);
+
+    FreeMat(inputMtxA);
+    FreeMat(inputMtxB);
+    FreeMat(outMtxAB);
 
     return 0;
 }
