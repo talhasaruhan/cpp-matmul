@@ -6,9 +6,9 @@ namespace CPUUtil
 {
     namespace
     {
-        static char cache = 0;
-        static unsigned numHWCores;
-        static ULONG_PTR* map = NULL;
+        static int logicalProcInfoCached = 0;
+        static unsigned numHWCores, numLogicalProcessors;
+        static ULONG_PTR* physLogicalProcessorMap = NULL;
 
         void PrintSysLPInfoArr(_SYSTEM_LOGICAL_PROCESSOR_INFORMATION* const sysLPInf,
                                const DWORD& retLen)
@@ -59,6 +59,16 @@ namespace CPUUtil
             return 0;
         }
 
+        template <typename T>
+        int NumSetBits(T n) {
+            int count = 0;
+            while (n) {
+                count += (n & 1) > 0 ? 1 : 0;
+                n >>= 1;
+            }
+            return count;
+        }
+
         DWORD _GetSysLPMap(unsigned& numHWCores)
         {
             // These assumptions should never fail on desktop
@@ -82,16 +92,18 @@ namespace CPUUtil
                 if (sysLPInf[i].Relationship != RelationProcessorCore)
                     continue;
 
-                lMap[numHWCores++] = sysLPInf[i].ProcessorMask;
+                ULONG_PTR logicalProcessorMask = sysLPInf[i].ProcessorMask;
+                lMap[numHWCores++] = logicalProcessorMask;
+                numLogicalProcessors += NumSetBits(logicalProcessorMask);
             }
 
-            map = (ULONG_PTR*)malloc(numHWCores * sizeof(ULONG_PTR));
-            memcpy(map, lMap, numHWCores * sizeof(ULONG_PTR));
+            physLogicalProcessorMap = (ULONG_PTR*)malloc(numHWCores * sizeof(ULONG_PTR));
+            memcpy(physLogicalProcessorMap, lMap, numHWCores * sizeof(ULONG_PTR));
             free(lMap);
 
             return 0;
         }
-    } // namespace
+    } // private namespace
 
     const char* BitmaskToStr(WORD bitmask)
     {
@@ -105,33 +117,35 @@ namespace CPUUtil
         return str;
     }
 
-    /* Returns decimal value for 32 bit mask at compile time, [i:j] set to 1, rest are 0. */
-    constexpr int GenerateMask(int i, int j)
-    {
-        if (i > j)
-            return (1 << (i + 1)) - (1 << j);
-        else
-            return (1 << (j + 1)) - (1 << i);
-    }
-
     int GetNumHWCores()
     {
-        if (!cache) {
+        if (!logicalProcInfoCached) {
             DWORD retCode = _GetSysLPMap(numHWCores);
             if (!retCode)
-                cache = 1;
+                logicalProcInfoCached = 1;
             else
                 return -1;
         }
         return numHWCores;
     }
 
-    int GetProcessorMask(unsigned n, ULONG_PTR& mask)
-    {
-        if (!cache) {
+    int GetNumLogicalProcessors() {
+        if (!logicalProcInfoCached) {
             DWORD retCode = _GetSysLPMap(numHWCores);
             if (!retCode)
-                cache = 1;
+                logicalProcInfoCached = 1;
+            else
+                return -1;
+        }
+        return numLogicalProcessors;
+    }
+
+    int GetProcessorMask(unsigned n, ULONG_PTR& mask)
+    {
+        if (!logicalProcInfoCached) {
+            DWORD retCode = _GetSysLPMap(numHWCores);
+            if (!retCode)
+                logicalProcInfoCached = 1;
             else
                 return retCode;
         }
@@ -139,9 +153,18 @@ namespace CPUUtil
         if (n >= numHWCores)
             return -1;
 
-        mask = map[n];
+        mask = physLogicalProcessorMap[n];
 
         return 0;
+    }
+
+    /* Returns decimal value for 32 bit mask at compile time, [i:j] set to 1, rest are 0. */
+    constexpr int GenerateMask(int i, int j)
+    {
+        if (i > j)
+            return (1 << (i + 1)) - (1 << j);
+        else
+            return (1 << (j + 1)) - (1 << i);
     }
 
     void GetCacheInfo(int* dCaches, int& iCache)
@@ -185,6 +208,12 @@ namespace CPUUtil
         int cpui[4];
         __cpuid(cpui, 1);
         return (cpui[1] & GenerateMask(15, 8)) >> (8 - 3);
+    }
+
+    int GetHTTStatus() {
+        int cpui[4];
+        __cpuid(cpui, 1);
+        return (cpui[3] & GenerateMask(28, 28)) >> 28;
     }
 
 }; // namespace CPUUtil

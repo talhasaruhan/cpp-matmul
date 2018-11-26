@@ -92,16 +92,24 @@
  *
  */
 
-template <int NumOfCoresToUse = -1, int NumThreadsPerCore = 2> class HWLocalThreadPool {
+class HWLocalThreadPool {
 public:
-    HWLocalThreadPool() : m_terminate(false)
+    HWLocalThreadPool(int _numOfCoresToUse, int _numThreadsPerCore) : m_terminate(false)
     {
         m_numHWCores = CPUUtil::GetNumHWCores();
 
-        if (NumOfCoresToUse <= 0)
+        if (_numOfCoresToUse <= 0) {
             m_numCoreHandlers = m_numHWCores;
-        else
-            m_numCoreHandlers = NumOfCoresToUse;
+        } else {
+            m_numCoreHandlers = _numOfCoresToUse;
+        }
+
+        if (_numThreadsPerCore <= 0) {
+            m_numThreadsPerCore =
+              CPUUtil::GetNumLogicalProcessors() / m_numCoreHandlers;
+        } else {
+            m_numThreadsPerCore = _numThreadsPerCore;
+        }
 
         /* malloc m_coreHandlers s.t no default initialization takes place, 
         we construct every object with placement new */
@@ -162,6 +170,11 @@ public:
         return m_numHWCores;
     }
 
+    const unsigned NumThreadsPerCore()
+    {
+        return m_numThreadsPerCore;
+    }
+
     template <typename F, typename... Args>
     static std::function<void()> WrapFunc(F&& f, Args&&... args)
     {
@@ -218,7 +231,7 @@ protected:
         CoreHandler(HWLocalThreadPool* const _parent, const unsigned _id,
                     const ULONG_PTR& _processorMask)
             : m_parent(_parent), m_id(_id), m_processorAffinityMask(_processorMask),
-              m_terminate(false), m_numChildThreads(NumThreadsPerCore - 1)
+              m_terminate(false), m_numChildThreads(_parent->m_numThreadsPerCore - 1)
         {
             if (m_numChildThreads > 0) {
                 m_childThreads = new std::thread[m_numChildThreads];
@@ -378,7 +391,8 @@ protected:
         std::condition_variable m_threadToCoreNotifier;
     };
 
-    unsigned m_numHWCores, m_numCoreHandlers;
+private:
+    unsigned m_numHWCores, m_numCoreHandlers, m_numThreadsPerCore;
     CoreHandler* m_coreHandlers;
     std::thread* m_coreHandlerThreads;
 

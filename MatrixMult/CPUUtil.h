@@ -7,20 +7,13 @@
 namespace CPUUtil
 {
     /* Utility, convert given bitmask to const char* */
-    const char* BitmaskToStr(WORD bitmask)
-    {
-        const unsigned N = sizeof(WORD) * 8;
-        char* const str = new char[N + 1];
-        str[N] = 0;
-        for (int i = 0; i < N; ++i) {
-            str[N - i - 1] = '0' + ((bitmask)&1);
-            bitmask >>= 1;
-        }
-        return str;
-    }
+    const char* BitmaskToStr(WORD bitmask);
 
-    /* Get number of physical processors on the system */
+    /* Get number of physical processors on the runtime system */
     int GetNumHWCores();
+
+    /* Get number of logical processors on the runtime system */
+    int GetNumLogicalProcessors();
 
     /* Get the logical processor mask corresponding to the Nth hardware core */
     int GetProcessorMask(unsigned n, ULONG_PTR& mask);
@@ -31,5 +24,8 @@ namespace CPUUtil
 
     /* Query cache line size on the current system. */
     int GetCacheLineSize();
+
+    /* Query whether or not the runtime system supports HTT */
+    int GetHTTStatus();
 
 }; // namespace CPUUtil

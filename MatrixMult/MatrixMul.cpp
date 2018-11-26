@@ -21,11 +21,12 @@
 /* Define for AVX alignment requirements */
 #define AVX_ALIGN 32
 
-/* Define default L2 and L3 cache sizes, actual values will be queried on runtime. */
+/* Define CPU related variables, actual values will be queried on runtime. */
 int CPUInfoQueried = 0;
-unsigned L2Size = 256 * 1024;
-unsigned L3Size = 12 * 1024 * 1024;
-unsigned cacheLineSz = 64;
+int L2Size = 256 * 1024;
+int L3Size = 12 * 1024 * 1024;
+int cacheLineSz = 64;
+int numHWCores = 6;
 
 /* Prefetching switches, if multiple MatMul operations are intended to run in parallel,
  * individual mutexes should be created for each one. */
@@ -815,6 +816,14 @@ __declspec(noalias) void MMHelper_MultFullBlocks(float* __restrict const matData
     }
 }
 
+__declspec(noalias) const Mat MTMatMul_HTT(const Mat& matA, const Mat& matB) {
+
+}
+
+__declspec(noalias) const Mat MTMatMul_NoHTT(const Mat& matA, const Mat& matB) {
+
+}
+
 /* This function divides the matrix multiplication into segments and
  * issues commands for a cache aware thread pool to handle them.
  * Uses the helper functions above. */
@@ -845,9 +854,11 @@ __declspec(noalias) const Mat MTMatMul(const Mat& matA, const Mat& matB)
     /* for the sake of cache, we'll be working with transposed B */
     const Mat matBT = TransposeMat(matB);
 
-    /* initialize the HWLocalThreadPool with 2 threads per physical core
-    * and 6 physical cores */
-    HWLocalThreadPool<6, 2> tp;
+    /* initialize the HWLocalThreadPool with 1/2 threads per physical core
+    * for all physical cores. Number of threads per core depends on HTT status. */
+    const int HTTEnabled = CPUUtil::GetHTTStatus();
+    const int jobStride = (1<<HTTEnabled);
+    HWLocalThreadPool tp(6, jobStride);
 
     /* decide the block sizes for the given matrix and CPU */
     const float invN = 1.0 / matA.rowSpan;
@@ -915,12 +926,12 @@ __declspec(noalias) const Mat MTMatMul(const Mat& matA, const Mat& matB)
                  blockRowC += issuedBlockSzY) {
                 for (int blockColC = largeBlockColC;
                      blockColC < largeBlockColC + L3BlockX;
-                     blockColC += 2 * issuedBlockSzX) {
+                     blockColC += jobStride * issuedBlockSzX) {
                     tp.Add(
-                      {HWLocalThreadPool<>::WrapFunc(MMHelper_MultFullBlocks, matData,
+                      {HWLocalThreadPool::WrapFunc(MMHelper_MultFullBlocks, matData,
                                                      matB.rowSpan, matA, matBT,
                                                      blockColC, blockRowC, mmBlockInfo),
-                       HWLocalThreadPool<>::WrapFunc(
+                       HWLocalThreadPool::WrapFunc(
                          MMHelper_MultFullBlocks, matData, matB.rowSpan, matA, matBT,
                          blockColC + issuedBlockSzX, blockRowC, mmBlockInfo)});
                 }
@@ -928,11 +939,11 @@ __declspec(noalias) const Mat MTMatMul(const Mat& matA, const Mat& matB)
         }
         /* handle the block w < L3X, h = L3Y at the end of the row */
         if (matB.width > largeBlockColC) {
-            const unsigned remSubX = (matB.width - largeBlockColC) / 2;
-            tp.Add({HWLocalThreadPool<>::WrapFunc(
+            const unsigned remSubX = (matB.width - largeBlockColC) >> HTTEnabled;
+            tp.Add({HWLocalThreadPool::WrapFunc(
                       MMHelper_MultAnyBlocks, matData, matB.rowSpan, matA, matBT,
                       largeBlockColC, largeBlockRowC, remSubX, L3BlockY, mmBlockInfo),
-                    HWLocalThreadPool<>::WrapFunc(
+                    HWLocalThreadPool::WrapFunc(
                       MMHelper_MultAnyBlocks, matData, matB.rowSpan, matA, matBT,
                       largeBlockColC + remSubX, largeBlockRowC,
                       matB.width - largeBlockColC - remSubX, L3BlockY, mmBlockInfo)});
@@ -942,18 +953,18 @@ __declspec(noalias) const Mat MTMatMul(const Mat& matA, const Mat& matB)
     int largeBlockColC = 0;
     /* first handle blocks of w = L3X, h < L3Y */
     for (; largeBlockColC <= (int)matB.width - L3BlockX;
-         largeBlockColC += 2 * issuedBlockSzX) {
+         largeBlockColC += jobStride * issuedBlockSzX) {
         tp.Add(
-          {HWLocalThreadPool<>::WrapFunc(
+          {HWLocalThreadPool::WrapFunc(
              MMHelper_MultAnyBlocks, matData, matB.rowSpan, matA, matBT, largeBlockColC,
              largeBlockRowC, issuedBlockSzX, matA.height - largeBlockRowC, mmBlockInfo),
-           HWLocalThreadPool<>::WrapFunc(MMHelper_MultAnyBlocks, matData, matB.rowSpan,
+           HWLocalThreadPool::WrapFunc(MMHelper_MultAnyBlocks, matData, matB.rowSpan,
                                          matA, matBT, largeBlockColC + issuedBlockSzX,
                                          largeBlockRowC, issuedBlockSzX,
                                          matA.height - largeBlockRowC, mmBlockInfo)});
     }
     /* now handle the rightmost block of w < L3X, h < L3Y */
-    tp.Add({HWLocalThreadPool<>::WrapFunc(MMHelper_MultAnyBlocks, matData, matB.rowSpan,
+    tp.Add({HWLocalThreadPool::WrapFunc(MMHelper_MultAnyBlocks, matData, matB.rowSpan,
                                           matA, matBT, largeBlockColC, largeBlockRowC,
                                           matB.width - largeBlockColC,
                                           matA.height - largeBlockRowC, mmBlockInfo),
@@ -982,18 +993,18 @@ const Mat MatMul(const Mat& matA, const Mat& matB)
 
 int __cdecl main(int argc, char* argv[])
 {
-    if (argc < 4) {
-        std::cout << "No args\n";
-        return 0;
-    }
+    //if (argc < 4) {
+    //    std::cout << "No args\n";
+    //    return 0;
+    //}
 
-    const char* inputMtxAFile = argv[1];
-    const char* inputMtxBFile = argv[2];
-    const char* outMtxABFile = argv[3];
+    //const char* inputMtxAFile = argv[1];
+    //const char* inputMtxBFile = argv[2];
+    //const char* outMtxABFile = argv[3];
 
-    //const char* inputMtxAFile = "matrixA9000.bin";
-    //const char* inputMtxBFile = "matrixB9000.bin";
-    //const char* outMtxABFile = "matrixAB-out.bin";
+    const char* inputMtxAFile = "matrixA9000.bin";
+    const char* inputMtxBFile = "matrixB9000.bin";
+    const char* outMtxABFile = "matrixAB-out.bin";
 
     const Mat inputMtxA = LoadMat(inputMtxAFile);
     const Mat inputMtxB = LoadMat(inputMtxBFile);
