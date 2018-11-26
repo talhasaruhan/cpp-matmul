@@ -23,32 +23,8 @@
  *
  * Why?
  *   When doing multithreading on cache sensitive tasks, 
- *   we want to keep threads that operate on same or 
- *     contiguous memory region on the same physical core.
- *
- *   For matrix multiplication, 
- *   assume that we have a HyperThreading system with K physical and 2K logical processors. 
- *   Each task computes a blocks on the A*B matrix, so memory accesses are exclusive
- *   If we instantiate 2K threads and leave it to the OS to handle them,
- *   In the best case scenerio, each hw core will have a half of its cache available for a block.
- *   And we'll need to access IO more often, possibly freezing the pipeline.
- *
- *   So, instead, we split these blocks into two and have two threads on the same core work on them.
- *   Memory fetches for one thread will directly benefit the other thread as well. 
- *   Very much contrary to the previous loosely threaded scenerio.
- *
- *   Note that we don't account for context switches etc.
- *   Also, there may be more complex CPU trickery I don't account for.
- *   But at the end of the day, I've empirically shown that this works better.
- *
- *
- * Currently this piece of code is not or claim to be:
- *   * As optimized as it can be
- *   * As conformative to modern C++ as it can be
- *
- * *********************************************************************************
- * IF YOU ENCOUNTER A BUG, OR SEE AN OPPURTUNITY FOR IMPROVEMENT, PLEASE LET ME KNOW
- * *********************************************************************************
+ *   we want to keep threads that operate on same or contiguous memory region 
+ *     on the same physical core s.t they share the same L2 cache.
  *
  * Reference: This code is influenced by writeup that explains thread pools at
  * https://github.com/mtrebi/thread-pool/blob/master/README.md
@@ -60,9 +36,10 @@
  *
  *   HWLocalThreadPool:
  *     Submission:
- *       array of (void function (void)) of length N
+ *       initializer list or vector of (void function (void)) of length N
  *         where N is the num of threads that will spawn on the same core,
- *         and, the length of the function ptr array. ith thread handles the ith function
+ *         and, the length of the std::function array. 
+ *         ith thread handles repective ith function
  *     
  *     Core Handlers:
  *       We create NumHWCores many CoreHandler objects.
@@ -70,8 +47,8 @@
  *       They check the main pool for jobs, when a job is found,
  *           if N==1   ,   they call the only function in the job description.
  *           if N>1    ,   they assign N-1 threads on the same physical core to,
- *                         respective functions fucntions in the array.
- *                         The CoreHandler is assigned to the first function.
+ *                         respective functions in the array. The CoreHandler is 
+ *                         assigned to the first function.
  *       Once CoreHandler finishes its own task, it waits for other threads,
  *       Then its available for new jobs, waiting to be notified by the pool manager.
  *     
@@ -298,14 +275,12 @@ protected:
                     }
                     if (m_parent->m_queue.Size() == 0) {
                         m_parent->m_queueToCoreNotifier.wait(lock);
-                        //std::cout << "Core " << m_id << ", is fetching a job\n";
                     }
                     dequeued = m_parent->m_queue.Pop(m_job);
                 }
                 if (dequeued) {
                     m_ownJob = std::move(m_job[0]);
                     if (m_numChildThreads < 1) {
-                        //std::cout << "Core " << m_id << ", started executing\n";
                         m_ownJob();
                     } else {
                         {
@@ -316,16 +291,13 @@ protected:
                             m_coreToThreadNotifier.notify_all();
                         }
 
-                        //std::cout << "Run on the CoreHandler\n";
                         m_ownJob();
 
                         WaitForChildThreads();
                     }
                 }
             }
-            //std::cout << "Will close the core " << m_id << ", closing threads\n";
             CloseChildThreads();
-            //std::cout << "Child threads are terminated\n";
         }
 
         class ThreadHandler {
@@ -342,7 +314,6 @@ protected:
                 SetThreadAffinityMask(GetCurrentThread(), m_processorAffinityMask);
                 while (1) {
                     {
-                        //std::cout << "Thread checking for jobs!!\n";
                         std::unique_lock<std::mutex> lock(m_parent->m_threadMutex);
                         if (m_parent->m_terminate)
                             break;
@@ -363,7 +334,6 @@ protected:
                         m_parent->m_threadToCoreNotifier.notify_one();
                     }
                 }
-                //std::cout << "Exiting the thread!\n";
             }
 
             const unsigned m_id;
@@ -385,7 +355,6 @@ protected:
         std::vector<std::function<void()>> m_job;
         std::function<void()> m_ownJob;
 
-        //std::mutex m_coreMutex;
         std::mutex m_threadMutex;
         std::condition_variable m_coreToThreadNotifier;
         std::condition_variable m_threadToCoreNotifier;

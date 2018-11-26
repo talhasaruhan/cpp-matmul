@@ -28,4 +28,7 @@ namespace CPUUtil
     /* Query whether or not the runtime system supports HTT */
     int GetHTTStatus();
 
+    /* Query if the runtime system supports AVX and FMA instruction sets. */
+    int GetSIMDSupport();
+
 }; // namespace CPUUtil

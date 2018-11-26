@@ -16,8 +16,6 @@
 #include <immintrin.h>
 #include "ThreadPool.h"
 
-#define NOMINMAX
-
 /* Define for AVX alignment requirements */
 #define AVX_ALIGN 32
 
@@ -45,7 +43,8 @@ typedef struct Mat {
     float* __restrict mat;
 } Mat;
 
-/* This struct holds the information for multiple levels of block sizes.
+/* 
+ * This struct holds the information for multiple levels of block sizes.
  * It's used to keep function parameters short and readable
  * Constraints on block sizes:
  * L2BlockX % 3 == L2BlockY % 4 == 0,
@@ -108,7 +107,7 @@ static unsigned RoundUpPwr2(unsigned val, unsigned pwr2)
 }
 
 /* Compute the transpose of a given matrix.
- * Currently a singlethreaded, implementation without blocking. */
+ * A singlethreaded implementation without block tiling. */
 __declspec(noalias) const Mat TransposeMat(const Mat& mat)
 {
     const unsigned tRowSpan = RoundUpPwr2(mat.height, 64 / sizeof(float));
@@ -117,7 +116,7 @@ __declspec(noalias) const Mat TransposeMat(const Mat& mat)
 
     Mat T{mat.height, mat.width, tRowSpan, tData};
 
-    // hah, the loops are truly interchangable as we encounter a cache miss either ways
+    // the loops are truly interchangable as we encounter a cache miss either ways
     for (int rowT = 0; rowT < T.height; ++rowT) {
         for (int colT = 0; colT < T.width; ++colT) {
             tData[rowT * tRowSpan + colT] = mat.mat[colT * mat.rowSpan + rowT];
@@ -145,9 +144,9 @@ static void PrintMat(const Mat& mat, std::ostream& stream)
 /* Naive MatMul */
 const Mat ST_NaiveMatMul(const Mat& matA, const Mat& matB)
 {
-    /* First : naive solution with but with some tricks to make compiler (MVC) behave
-    * Note that, in this case, manually unrolling the loop helps
-    * as the compiler can't auto-vectorize non-contagious memory access */
+    /* First : naive solution with but with some tricks to make compiler (MSVC) behave
+     * Note that, in this case, manually unrolling the loop helps
+     * as the compiler can't auto-vectorize non-contagious memory access */
     float* __restrict const matData =
       (float*)_aligned_malloc(matA.height * matB.rowSpan * sizeof(float), AVX_ALIGN);
 
@@ -155,10 +154,10 @@ const Mat ST_NaiveMatMul(const Mat& matA, const Mat& matB)
 
     for (int rowC = 0; rowC < matA.height; ++rowC) {
         for (int colC = 0; colC < matB.width; ++colC) {
-            // an independent, local accumulator.
+            /* an independent, local accumulator. */
             float accumulate = 0;
             int pos = 0;
-            // interestingly, manual unrolling IS helpful, it takes 1000x1000 multiplication from about 990ms to 710ms
+            /* manual unrolling IS helpful in this case */
             for (; pos < matA.width - 4; pos += 4) {
                 accumulate += matA.mat[rowC * matA.rowSpan + pos] *
                                 matB.mat[pos * matB.rowSpan + colC] +
@@ -183,7 +182,8 @@ const Mat ST_NaiveMatMul(const Mat& matA, const Mat& matB)
 /* MatMul with transposed B for improved cache behavior. */
 const Mat ST_TransposedBMatMul(const Mat& matA, const Mat& matB)
 {
-    /* Now, transposing B and then traversing it row order seemed promising!
+    /* 
+     * Now, transposing B and then traversing it row order seemed promising!
      * Also, note that, if we manually unrolled the loop here, 
      * compiler wouldn't vectorize the loop, 
      * so we keep it simple and let MSVC auto vectorize this.
@@ -210,7 +210,8 @@ const Mat ST_TransposedBMatMul(const Mat& matA, const Mat& matB)
     return matC;
 }
 
-/* MatMul with a different traveral order. 
+/* 
+ * MatMul with a different traversal order. 
  * Instead of linearly running thru whole rows of output matrix C, 
  * calculate blocks of a certain size at a time. 
  */
@@ -333,7 +334,8 @@ __declspec(noalias) void MMHelper_Mult1x1Blocks(float* __restrict const matData,
                                                 const Mat& matBT, const unsigned col,
                                                 const unsigned row);
 
-/* Helper function for computing a block out of the output matrix C.
+/* 
+ * Helper function for computing a block out of the output matrix C.
  * This function is used for the residues at the edges 
  * after the majority of the matrix is computed as KxK sized blocks.
  * (t,l,b,r)->(row, col, row+blockY, col+blockX). 
@@ -608,21 +610,26 @@ __declspec(noalias) void MMHelper_Mult4x3Blocks(float* __restrict const matData,
                    matBToffset2 = (col + 1) * matBT.rowSpan,
                    matBToffset3 = (col + 2) * matBT.rowSpan;
 
-    /* Visualization:
-    *
-    * <-----A.w----> <-----A.w---->
-    * [----[a1]----] [----[b1]----]
-    * [----[a2]----] [----[b2]----]
-    * [----[a3]----] [----[b3]----]
-    *      ^ row          ^col
-    *
-    * Unlike previous iterations where the program computed
-    * the dot product between 2 rows using 8x8f vectors,
-    * we are now computing dot product of 3 rows and 3 columns
-    * at the same time, 1x8f vectors at a time.
-    * This allows for much better register usage and FLOP/load ratio. */
+    /* 
+     * <-----A.w----> <-----A.w---->
+     * [----[a1]----] [----[b1]----]
+     * [----[a2]----] [----[b2]----]
+     * [----[a3]----] [----[b3]----]
+     * [----[a4]----]      ^col
+     *      ^ row          
+     *
+     * we are now computing dot product of 3 rows and 3 columns
+     * at the same time, 1x8f vectors at a time.
+     *
+     * 3 ymm registers for b1:3,
+     * 4*3 = 12 registers for the accumulators
+     * 1 register for the temporary ai value loaded.
+     * All 16 registers are used.
+     * High arithmetic density: 7 loads -> 12 fma instructions
+     *
+     */
 
-    /* set up accumulator SIMD variables */
+    /* set up SIMD variables */
     __m256 a, b1, b2, b3;
     __m256 c1 = _mm256_setzero_ps();
     __m256 c2 = _mm256_setzero_ps();
@@ -637,18 +644,20 @@ __declspec(noalias) void MMHelper_Mult4x3Blocks(float* __restrict const matData,
     __m256 c11 = _mm256_setzero_ps();
     __m256 c12 = _mm256_setzero_ps();
 
-    /* 64 byte cache line -> 2x8f prefetch at a time */
+    /* if prefetch switch is set, 
+     * prefetch first sections, one cache line at a time */
     if constexpr (doL12Prefetch) {
         _mm_prefetch((const char*)&matA.mat[matAoffset1], _MM_HINT_T0);
         _mm_prefetch((const char*)&matA.mat[matAoffset2], _MM_HINT_T0);
         _mm_prefetch((const char*)&matA.mat[matAoffset3], _MM_HINT_T0);
+        _mm_prefetch((const char*)&matA.mat[matAoffset4], _MM_HINT_T0);
 
         _mm_prefetch((const char*)&matBT.mat[matBToffset1], _MM_HINT_T0);
         _mm_prefetch((const char*)&matBT.mat[matBToffset2], _MM_HINT_T0);
         _mm_prefetch((const char*)&matBT.mat[matBToffset3], _MM_HINT_T0);
     }
 
-    /* 0.75 arithmetic intensity, 6 loads (3 a, 3 b) -> 9 fma instructions. */
+    /* do the dot products */
     for (int pos = 0; pos < matA.width; pos += 8) {
         if constexpr (doL12Prefetch) {
             if ((pos & (unsigned)15)) {
@@ -753,10 +762,11 @@ __declspec(noalias) void MMHelper_Mult4x3Blocks(float* __restrict const matData,
     matData[(row + 3) * rowSpan + col + 2] = accumulate[11];
 }
 
-/* Compute L2Y x L2X sized blocks from the output matrix C.
-* In order to keep this code nice and hot in instruction cache,
-* keep it restricted to full blocks of L2X x L2Y.
-*/
+/* 
+ * Compute L2Y x L2X sized blocks from the output matrix C.
+ * In order to keep this code nice and hot in instruction cache,
+ * keep it restricted to full blocks of L2X x L2Y.
+ */
 __declspec(noalias) void MMHelper_MultL2Blocks(float* __restrict const matData,
                                                const unsigned rowSpan, const Mat& matA,
                                                const Mat& matBT, const unsigned col,
@@ -764,6 +774,7 @@ __declspec(noalias) void MMHelper_MultL2Blocks(float* __restrict const matData,
                                                const unsigned L2BlockX,
                                                const unsigned L2BlockY)
 {
+    /* multiply 4x3 blocks, L2blockX == 3*k, L2blockY == 4*m */
     for (int blockRow = row; blockRow < row + L2BlockY; blockRow += 4) {
         for (int blockCol = col; blockCol < col + L2BlockX; blockCol += 3) {
             MMHelper_Mult4x3Blocks(matData, rowSpan, matA, matBT, blockCol, blockRow);
@@ -784,7 +795,7 @@ __declspec(noalias) void MMHelper_MultFullBlocks(float* __restrict const matData
                    issuedBlockSzX = mmBlockInfo.issuedBlockSzX,
                    issuedBlockSzY = mmBlockInfo.issuedBlockSzY;
 
-    /* try to prefetch next L3 block into memory while still handling this one */
+    /* try to prefetch next bit of block into memory while still handling this one */
     {
         if constexpr (doL3Prefetch) {
             std::unique_lock<std::mutex> lock(prefetchMutex);
@@ -806,6 +817,7 @@ __declspec(noalias) void MMHelper_MultFullBlocks(float* __restrict const matData
         }
     }
 
+    /* multiply L2YxL2X blocks */
     for (int blockColC = colC; blockColC < colC + issuedBlockSzX;
          blockColC += L2BlockX) {
         for (int blockRowC = rowC; blockRowC < rowC + issuedBlockSzY;
@@ -816,17 +828,11 @@ __declspec(noalias) void MMHelper_MultFullBlocks(float* __restrict const matData
     }
 }
 
-__declspec(noalias) const Mat MTMatMul_HTT(const Mat& matA, const Mat& matB) {
-
-}
-
-__declspec(noalias) const Mat MTMatMul_NoHTT(const Mat& matA, const Mat& matB) {
-
-}
-
-/* This function divides the matrix multiplication into segments and
+/* 
+ * This function divides the matrix multiplication into segments and
  * issues commands for a cache aware thread pool to handle them.
- * Uses the helper functions above. */
+ * Uses the helper functions above. 
+ */
 __declspec(noalias) const Mat MTMatMul(const Mat& matA, const Mat& matB)
 {
     /* if CPU information is not already queried, do so */
@@ -854,10 +860,10 @@ __declspec(noalias) const Mat MTMatMul(const Mat& matA, const Mat& matB)
     /* for the sake of cache, we'll be working with transposed B */
     const Mat matBT = TransposeMat(matB);
 
-    /* initialize the HWLocalThreadPool with 1/2 threads per physical core
+    /* initialize the HWLocalThreadPool with 1 or 2 threads per physical core
     * for all physical cores. Number of threads per core depends on HTT status. */
     const int HTTEnabled = CPUUtil::GetHTTStatus();
-    const int jobStride = (1<<HTTEnabled);
+    const int jobStride = (1 << HTTEnabled);
     HWLocalThreadPool tp(6, jobStride);
 
     /* decide the block sizes for the given matrix and CPU */
@@ -910,7 +916,7 @@ __declspec(noalias) const Mat MTMatMul(const Mat& matA, const Mat& matB)
      *   [C2T0 | C5T1] [C2T0 | C2T1] ] 
      *
      * Traverse L3 sized blocks, 
-     * inside each, traverse issuedBlockSz sized blocks.
+     * inside each, issue issuedBlockSz sized blocks.
      */
 
     int largeBlockRowC = 0;
@@ -929,8 +935,8 @@ __declspec(noalias) const Mat MTMatMul(const Mat& matA, const Mat& matB)
                      blockColC += jobStride * issuedBlockSzX) {
                     tp.Add(
                       {HWLocalThreadPool::WrapFunc(MMHelper_MultFullBlocks, matData,
-                                                     matB.rowSpan, matA, matBT,
-                                                     blockColC, blockRowC, mmBlockInfo),
+                                                   matB.rowSpan, matA, matBT, blockColC,
+                                                   blockRowC, mmBlockInfo),
                        HWLocalThreadPool::WrapFunc(
                          MMHelper_MultFullBlocks, matData, matB.rowSpan, matA, matBT,
                          blockColC + issuedBlockSzX, blockRowC, mmBlockInfo)});
@@ -959,15 +965,15 @@ __declspec(noalias) const Mat MTMatMul(const Mat& matA, const Mat& matB)
              MMHelper_MultAnyBlocks, matData, matB.rowSpan, matA, matBT, largeBlockColC,
              largeBlockRowC, issuedBlockSzX, matA.height - largeBlockRowC, mmBlockInfo),
            HWLocalThreadPool::WrapFunc(MMHelper_MultAnyBlocks, matData, matB.rowSpan,
-                                         matA, matBT, largeBlockColC + issuedBlockSzX,
-                                         largeBlockRowC, issuedBlockSzX,
-                                         matA.height - largeBlockRowC, mmBlockInfo)});
+                                       matA, matBT, largeBlockColC + issuedBlockSzX,
+                                       largeBlockRowC, issuedBlockSzX,
+                                       matA.height - largeBlockRowC, mmBlockInfo)});
     }
     /* now handle the rightmost block of w < L3X, h < L3Y */
     tp.Add({HWLocalThreadPool::WrapFunc(MMHelper_MultAnyBlocks, matData, matB.rowSpan,
-                                          matA, matBT, largeBlockColC, largeBlockRowC,
-                                          matB.width - largeBlockColC,
-                                          matA.height - largeBlockRowC, mmBlockInfo),
+                                        matA, matBT, largeBlockColC, largeBlockRowC,
+                                        matB.width - largeBlockColC,
+                                        matA.height - largeBlockRowC, mmBlockInfo),
             []() {}});
 
     /* -- commands issued -- */
@@ -984,7 +990,11 @@ __declspec(noalias) const Mat MTMatMul(const Mat& matA, const Mat& matB)
  * based on the complexity of the input matrix. */
 const Mat MatMul(const Mat& matA, const Mat& matB)
 {
-    /* A:  a,b B: b,c => # of ops ~= 2*a*b*c */
+    /* 
+     * If complexity is low enough,
+     * use the single threaded, transposed B method.
+     * A(N, M) B(M, K) => # of ops ~= 2*N*K*M 
+     */
     if (matA.height * matA.width * matB.width < 350 * 350 * 350) {
         return ST_TransposedBMatMul(matA, matB);
     }
@@ -993,18 +1003,21 @@ const Mat MatMul(const Mat& matA, const Mat& matB)
 
 int __cdecl main(int argc, char* argv[])
 {
-    //if (argc < 4) {
-    //    std::cout << "No args\n";
-    //    return 0;
-    //}
+    if (argc < 4) {
+        std::cout << "No args\n";
+        return 0;
+    }
 
-    //const char* inputMtxAFile = argv[1];
-    //const char* inputMtxBFile = argv[2];
-    //const char* outMtxABFile = argv[3];
+    /* make sure the runtime system supports AVX and FMA ISAs */
+    assert(CPUUtil::GetSIMDSupport());
 
-    const char* inputMtxAFile = "matrixA9000.bin";
-    const char* inputMtxBFile = "matrixB9000.bin";
-    const char* outMtxABFile = "matrixAB-out.bin";
+    const char* inputMtxAFile = argv[1];
+    const char* inputMtxBFile = argv[2];
+    const char* outMtxABFile = argv[3];
+
+    //const char* inputMtxAFile = "matrixA9000.bin";
+    //const char* inputMtxBFile = "matrixB9000.bin";
+    //const char* outMtxABFile = "matrixAB-out.bin";
 
     const Mat inputMtxA = LoadMat(inputMtxAFile);
     const Mat inputMtxB = LoadMat(inputMtxBFile);
@@ -1013,9 +1026,7 @@ int __cdecl main(int argc, char* argv[])
            inputMtxB.width);
 
     auto start = std::chrono::high_resolution_clock::now();
-
     const Mat outMtxAB = MatMul(inputMtxA, inputMtxB);
-
     auto end = std::chrono::high_resolution_clock::now();
 
     printf("%d %d\n", outMtxAB.height, outMtxAB.width);

@@ -158,7 +158,7 @@ namespace CPUUtil
         return 0;
     }
 
-    /* Returns decimal value for 32 bit mask at compile time, [i:j] set to 1, rest are 0. */
+    /* Returns decimal value for a 32 bit mask at compile time, [i:j] set to 1, rest are 0. */
     constexpr int GenerateMask(int i, int j)
     {
         if (i > j)
@@ -213,7 +213,15 @@ namespace CPUUtil
     int GetHTTStatus() {
         int cpui[4];
         __cpuid(cpui, 1);
-        return (cpui[3] & GenerateMask(28, 28)) >> 28;
+        return (cpui[3] & (1<<28)) >> 28;
+    }
+
+    int GetSIMDSupport() {
+        int cpui[4];
+        __cpuid(cpui, 1);
+        int fma = (cpui[2] & (1 << 12)) >> 12;
+        int avx = (cpui[2] & (1 << 28)) >> 28;
+        return fma & avx;
     }
 
 }; // namespace CPUUtil
