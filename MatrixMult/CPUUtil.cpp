@@ -213,7 +213,7 @@ namespace CPUUtil
     int GetHTTStatus() {
         int cpui[4];
         __cpuid(cpui, 1);
-        return (cpui[3] & (1<<28)) >> 28;
+        return ((cpui[3] & (1<<28)) >> 28) ? 1 : 0;
     }
 
     int GetSIMDSupport() {

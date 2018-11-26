@@ -879,14 +879,15 @@ __declspec(noalias) const Mat MTMatMul(const Mat& matA, const Mat& matB)
     * for all physical cores. Number of threads per core depends on HTT status. */
     const int HTTEnabled = CPUUtil::GetHTTStatus();
     const int jobStride = (1 << HTTEnabled);
-    HWLocalThreadPool tp(6, jobStride);
+    HWLocalThreadPool tp(0, jobStride);
 
     /* decide the block sizes for the given matrix and CPU */
     const float invN = 1.0 / matA.rowSpan;
 
-    int L3BlockX =
-      min(min(((int)(invN * (float)((L3Size / 2) / sizeof(float))) / (60)) * (60), 240),
-          matA.width / 60 * 60);
+    int L3BlockX = min(
+        min(((int)(invN * (float)((L3Size / 2) / sizeof(float))) / (60)) * (60), 240),
+        matA.width / 60 * 60
+    );
     int L3BlockY = L3BlockX;
     int L2BlockX =
       max(min((int)((invN * (float)((L2Size / 2) / sizeof(float))) / 3) * 3, 30), 3);
@@ -921,7 +922,7 @@ __declspec(noalias) const Mat MTMatMul(const Mat& matA, const Mat& matB)
     /* start issuing jobs for the thread pool */
 
     /*
-     * We encorporate multiple levels of tiling into our traversal.
+     * We incorporate multiple levels of tiling into our traversal.
      *
      * If we issue commands linearly, we'll have poor L3 cache utilization.
      * [ [C0T0 | C0T1] [C1T0 | C1T1] ... [C5T0 | C5T1] ] covering a rows, b columns,
@@ -934,63 +935,63 @@ __declspec(noalias) const Mat MTMatMul(const Mat& matA, const Mat& matB)
      * inside each, issue issuedBlockSz sized blocks.
      */
 
-    int largeBlockRowC = 0;
+    int rowC = 0;
     /* handle L3Y sized rows
      * cast unsigned dimensions to signed to avoid UB */
-    for (; largeBlockRowC <= (int)matA.height - L3BlockY; largeBlockRowC += L3BlockY) {
-        int largeBlockColC = 0;
+    for (; rowC <= (int)matA.height - L3BlockY; rowC += L3BlockY) {
+        int colC = 0;
         /* handle L3Y x L3X sized blocks */
-        for (; largeBlockColC <= (int)matB.width - L3BlockX;
-             largeBlockColC += L3BlockX) {
+        for (; colC <= (int)matB.width - L3BlockX; colC += L3BlockX) {
             /* Issue issuedBlockSzY x issuedBlockSzX sized blocks */
-            for (int blockRowC = largeBlockRowC; blockRowC < largeBlockRowC + L3BlockY;
+            for (int blockRowC = rowC; blockRowC < rowC + L3BlockY;
                  blockRowC += issuedBlockSzY) {
-                for (int blockColC = largeBlockColC;
-                     blockColC < largeBlockColC + L3BlockX;
+                for (int blockColC = colC; blockColC < colC + L3BlockX;
                      blockColC += jobStride * issuedBlockSzX) {
                     tp.Add({
                         HWLocalThreadPool::WrapFunc(MMHelper_MultFullBlocks, matData,
-                                                   matB.rowSpan, matA, matBT, blockColC,
-                                                   blockRowC, mmBlockInfo),
+                                                    matB.rowSpan, matA, matBT, blockColC,
+                                                    blockRowC, mmBlockInfo),
                         HWLocalThreadPool::WrapFunc(MMHelper_MultFullBlocks, matData, 
-                                                   matB.rowSpan, matA, matBT,
-                                                   blockColC + issuedBlockSzX, blockRowC, 
-                                                   mmBlockInfo)
+                                                    matB.rowSpan, matA, matBT,
+                                                    blockColC + issuedBlockSzX, 
+                                                    blockRowC, mmBlockInfo)
                         });
                 }
             }
         }
         /* handle the block w < L3X, h = L3Y at the end of the row */
-        if (matB.width > largeBlockColC) {
-            const unsigned remSubX = (matB.width - largeBlockColC) >> HTTEnabled;
-            tp.Add({HWLocalThreadPool::WrapFunc(
-                      MMHelper_MultAnyBlocks, matData, matB.rowSpan, matA, matBT,
-                      largeBlockColC, largeBlockRowC, remSubX, L3BlockY, mmBlockInfo),
-                    HWLocalThreadPool::WrapFunc(
-                      MMHelper_MultAnyBlocks, matData, matB.rowSpan, matA, matBT,
-                      largeBlockColC + remSubX, largeBlockRowC,
-                      matB.width - largeBlockColC - remSubX, L3BlockY, mmBlockInfo)});
+        if (matB.width > colC) {
+            const unsigned remSubX = (matB.width - colC) >> HTTEnabled;
+            tp.Add({
+                HWLocalThreadPool::WrapFunc(MMHelper_MultAnyBlocks, matData,
+                                            matB.rowSpan, matA, matBT, colC, rowC,
+                                            remSubX, L3BlockY, mmBlockInfo),
+                HWLocalThreadPool::WrapFunc(MMHelper_MultAnyBlocks, matData, 
+                                            matB.rowSpan, matA, matBT,
+                                            colC + remSubX, rowC, 
+                                            matB.width - colC - remSubX, L3BlockY,
+                                            mmBlockInfo)
+                });
         }
     }
     /* handle last row, h < L3Y */
-    int largeBlockColC = 0;
+    int colC = 0;
     /* first handle blocks of w = L3X, h < L3Y */
-    for (; largeBlockColC <= (int)matB.width - L3BlockX;
-         largeBlockColC += jobStride * issuedBlockSzX) {
-        tp.Add(
-          {HWLocalThreadPool::WrapFunc(
-             MMHelper_MultAnyBlocks, matData, matB.rowSpan, matA, matBT, largeBlockColC,
-             largeBlockRowC, issuedBlockSzX, matA.height - largeBlockRowC, mmBlockInfo),
-           HWLocalThreadPool::WrapFunc(MMHelper_MultAnyBlocks, matData, matB.rowSpan,
-                                       matA, matBT, largeBlockColC + issuedBlockSzX,
-                                       largeBlockRowC, issuedBlockSzX,
-                                       matA.height - largeBlockRowC, mmBlockInfo)});
+    for (; colC <= (int)matB.width - L3BlockX; colC += jobStride * issuedBlockSzX) {
+        tp.Add({
+            HWLocalThreadPool::WrapFunc(MMHelper_MultAnyBlocks, matData, 
+                                        matB.rowSpan, matA, matBT, colC,
+                                        rowC, issuedBlockSzX, matA.height - rowC, 
+                                        mmBlockInfo),
+            HWLocalThreadPool::WrapFunc(MMHelper_MultAnyBlocks, matData,
+                                        matB.rowSpan, matA, matBT,
+                                        colC + issuedBlockSzX, rowC, issuedBlockSzX,
+                                        matA.height - rowC, mmBlockInfo)});
     }
     /* now handle the rightmost block of w < L3X, h < L3Y */
     tp.Add({HWLocalThreadPool::WrapFunc(MMHelper_MultAnyBlocks, matData, matB.rowSpan,
-                                        matA, matBT, largeBlockColC, largeBlockRowC,
-                                        matB.width - largeBlockColC,
-                                        matA.height - largeBlockRowC, mmBlockInfo),
+                                        matA, matBT, colC, rowC, matB.width - colC,
+                                        matA.height - rowC, mmBlockInfo),
             []() {}});
 
     /* -- commands issued -- */
