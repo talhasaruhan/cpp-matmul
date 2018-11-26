@@ -18,9 +18,15 @@
     <ClCompile Include="MatrixMul.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="CPUUtil.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ThreadPool.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="CPUUtil.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

@@ -19,9 +19,11 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="CPUUtil.cpp" />
     <ClCompile Include="MatrixMul.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="CPUUtil.h" />
     <ClInclude Include="ThreadPool.h" />
   </ItemGroup>
   <PropertyGroup Label="Globals">

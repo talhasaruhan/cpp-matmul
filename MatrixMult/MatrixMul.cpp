@@ -21,10 +21,11 @@
 /* Define for AVX alignment requirements */
 #define AVX_ALIGN 32
 
-/* Define L2 and L3 cache sizes needed to compute the optimal block sizes */
-constexpr unsigned L2Size = 256 * 1024;
-constexpr unsigned L3Size = 12 * 1024 * 1024;
-constexpr unsigned cacheLineSz = 64;
+/* Define default L2 and L3 cache sizes, actual values will be queried on runtime. */
+int CPUInfoQueried = 0;
+unsigned L2Size = 256 * 1024;
+unsigned L3Size = 12 * 1024 * 1024;
+unsigned cacheLineSz = 64;
 
 /* Prefetching switches, if multiple MatMul operations are intended to run in parallel,
  * individual mutexes should be created for each one. */
@@ -819,6 +820,21 @@ __declspec(noalias) void MMHelper_MultFullBlocks(float* __restrict const matData
  * Uses the helper functions above. */
 __declspec(noalias) const Mat MTMatMul(const Mat& matA, const Mat& matB)
 {
+    /* if CPU information is not already queried, do so */
+    if (!CPUInfoQueried) {
+        int dCaches[3];
+        int iCache;
+
+        CPUUtil::GetCacheInfo(&dCaches[0], iCache);
+
+        L2Size = dCaches[1];
+        L3Size = dCaches[2];
+
+        cacheLineSz = CPUUtil::GetCacheLineSize();
+
+        CPUInfoQueried++;
+    }
+
     /* allocate the aligned float array for our new matrix C */
     float* __restrict const matData =
       (float*)_aligned_malloc(matA.height * matB.rowSpan * sizeof(float), AVX_ALIGN);

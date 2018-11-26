@@ -5,12 +5,12 @@
 #include <mutex>
 #include <tuple>
 #include <vector>
-#include <Windows.h>
 #include <iostream>
 #include <cmath>
 #include <future>
 #include <array>
 #include <cassert>
+#include "CPUUtil.h"
 
 /*
  * Thread pool that respects cache locality on HyperThreaded CPUs (WIN32 API dependent)
@@ -54,8 +54,8 @@
  * https://github.com/mtrebi/thread-pool/blob/master/README.md
  *
  * Structure:
- *   QueryHWCores:
- *     Uses Windows API to detect the number of physical cores 
+ *   CPUUtil:
+ *     Uses Windows API to detect the number of physical cores, cache sizes 
  *       and mapping between physical and logical processors.
  *
  *   HWLocalThreadPool:
@@ -92,151 +92,11 @@
  *
  */
 
-namespace QueryHWCores
-{
-static char cache = 0;
-static unsigned numHWCores;
-static ULONG_PTR* map = NULL;
-
-const char* BitmaskToStr(WORD bitmask)
-{
-    const unsigned N = sizeof(WORD) * 8;
-    char* const str = new char[N + 1];
-    str[N] = 0;
-    for (int i = 0; i < N; ++i) {
-        str[N - i - 1] = '0' + ((bitmask)&1);
-        bitmask >>= 1;
-    }
-    return str;
-}
-
-void PrintSysLPInfoArr(_SYSTEM_LOGICAL_PROCESSOR_INFORMATION* const sysLPInf,
-                       const DWORD& retLen)
-{
-    unsigned numPhysicalCores = 0;
-    for (int i = 0; i * sizeof(_SYSTEM_LOGICAL_PROCESSOR_INFORMATION) <= retLen; ++i) {
-        if (sysLPInf[i].Relationship != RelationProcessorCore)
-            continue;
-
-        printf("PHYSICAL CPU[%d]\n\t_SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX:\n",
-               numPhysicalCores);
-        printf("\t\tProcessorMask:%s\n", BitmaskToStr(sysLPInf[i].ProcessorMask));
-        printf("\t\tRelationship:%u | RelationProcessorCore\n",
-               (uint8_t)sysLPInf[i].Relationship);
-        printf("\t\tProcessorCore:\n");
-        printf("\t\t\tFlags(HT?):%d\n", (uint8_t)sysLPInf[i].ProcessorCore.Flags);
-        ++numPhysicalCores;
-    }
-}
-
-int TestCPUCores()
-{
-    const unsigned N = 30;
-    _SYSTEM_LOGICAL_PROCESSOR_INFORMATION sysLPInf[N];
-    DWORD retLen = N * sizeof(_SYSTEM_LOGICAL_PROCESSOR_INFORMATION);
-    LOGICAL_PROCESSOR_RELATIONSHIP lpRel = RelationProcessorCore;
-
-    BOOL retCode = GetLogicalProcessorInformation(&sysLPInf[0], &retLen);
-
-    if (!retCode) {
-        DWORD errCode = GetLastError();
-        printf("ERR: %d\n", errCode);
-        if (errCode == ERROR_INSUFFICIENT_BUFFER) {
-            printf("Buffer is not large enough! Buffer length required: %d\n", retLen);
-        } else {
-            printf("CHECK MSDN SYSTEM ERROR CODES LIST.\n");
-        }
-        return errCode;
-    }
-
-    PrintSysLPInfoArr(sysLPInf, retLen);
-
-    return 0;
-}
-
-DWORD _GetSysLPMap(unsigned& numHWCores)
-{
-    // These assumptions should never fail on desktop
-    const unsigned N = 48, M = 48;
-
-    _SYSTEM_LOGICAL_PROCESSOR_INFORMATION sysLPInf[N];
-    DWORD retLen = N * sizeof(_SYSTEM_LOGICAL_PROCESSOR_INFORMATION);
-    LOGICAL_PROCESSOR_RELATIONSHIP lpRel = RelationProcessorCore;
-
-    static BOOL retCode = GetLogicalProcessorInformation(&sysLPInf[0], &retLen);
-
-    if (!retCode) {
-        return GetLastError();
-    }
-
-    ULONG_PTR* const lMap = (ULONG_PTR*)malloc(M * sizeof(ULONG_PTR));
-
-    numHWCores = 0;
-    for (int i = 0; i * sizeof(_SYSTEM_LOGICAL_PROCESSOR_INFORMATION) <= retLen; ++i) {
-        if (sysLPInf[i].Relationship != RelationProcessorCore)
-            continue;
-
-        lMap[numHWCores++] = sysLPInf[i].ProcessorMask;
-    }
-
-    map = (ULONG_PTR*)malloc(numHWCores * sizeof(ULONG_PTR));
-    memcpy(map, lMap, numHWCores * sizeof(ULONG_PTR));
-    free(lMap);
-
-    return 0;
-}
-
-// Get the logical processor mask corresponding to the Nth hardware core
-int GetProcessorMask(unsigned n, ULONG_PTR& mask)
-{
-    if (!cache) {
-        DWORD retCode = _GetSysLPMap(numHWCores);
-        if (!retCode)
-            cache = 1;
-        else
-            return retCode;
-    }
-
-    if (n >= numHWCores)
-        return -1;
-
-    mask = map[n];
-
-    return 0;
-}
-
-int GetNumHWCores()
-{
-    if (!cache) {
-        DWORD retCode = _GetSysLPMap(numHWCores);
-        if (!retCode)
-            cache = 1;
-        else
-            return -1;
-    }
-    return numHWCores;
-}
-
-// unsafe impl. returns direct pointer to the map
-ULONG_PTR* GetProcessorMaskMap_UNSAFE()
-{
-    if (!cache) {
-        DWORD retCode = _GetSysLPMap(numHWCores);
-        if (!retCode)
-            cache = 1;
-        else
-            return NULL;
-    }
-
-    return map;
-}
-}; // namespace QueryHWCores
-
 template <int NumOfCoresToUse = -1, int NumThreadsPerCore = 2> class HWLocalThreadPool {
 public:
     HWLocalThreadPool() : m_terminate(false)
     {
-        m_numHWCores = QueryHWCores::GetNumHWCores();
+        m_numHWCores = CPUUtil::GetNumHWCores();
 
         if (NumOfCoresToUse <= 0)
             m_numCoreHandlers = m_numHWCores;
@@ -250,8 +110,7 @@ public:
 
         for (int i = 0; i < m_numCoreHandlers; ++i) {
             ULONG_PTR processAffinityMask;
-            int maskQueryRetCode =
-              QueryHWCores::GetProcessorMask(i, processAffinityMask);
+            int maskQueryRetCode = CPUUtil::GetProcessorMask(i, processAffinityMask);
             if (maskQueryRetCode) {
                 assert(0, "Can't query processor relations.");
                 return;
