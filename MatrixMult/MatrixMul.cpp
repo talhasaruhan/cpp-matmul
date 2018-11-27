@@ -895,7 +895,6 @@ __declspec(noalias) const Mat MTMatMul(const Mat& matA, const Mat& matB)
     int QL3 = invN * L3Size / sizeof(float);
     int k = min(max(QL2 / 6, 1), 10);
     int m = min(max(QL2 / 8, 1), 10);
-    printf("%d %d %d %d\n", QL2, QL3, k, m);
     int L2BlockX = 3 * k;
     int L2BlockY = 4 * m;
     int lcmMN = std::lcm(k, m);
@@ -904,8 +903,8 @@ __declspec(noalias) const Mat MTMatMul(const Mat& matA, const Mat& matB)
     int issuedBlockSzX = L3BlockX / 4;
     int issuedBlockSzY = L3BlockY / 3;
 
-    printf("%d %d\n%d %d %d %d %d %d\n", matC.height, matC.width, L2BlockX, L2BlockY, issuedBlockSzX, issuedBlockSzY,
-           L3BlockX, L3BlockY);
+    /*printf("%d %d\n%d %d %d %d %d %d\n", matC.height, matC.width, L2BlockX, L2BlockY, issuedBlockSzX, issuedBlockSzY,
+           L3BlockX, L3BlockY);*/
 
     MMBlockInfo mmBlockInfo{L3BlockX, L3BlockY,       L2BlockX,
                             L2BlockY, issuedBlockSzX, issuedBlockSzY};
@@ -1029,21 +1028,21 @@ const Mat MatMul(const Mat& matA, const Mat& matB)
 
 int __cdecl main(int argc, char* argv[])
 {
-    //if (argc < 4) {
-    //    std::cout << "No args\n";
-    //    return 0;
-    //}
+    if (argc < 4) {
+        std::cout << "No args\n";
+        return 0;
+    }
 
-    ///* make sure the runtime system supports AVX and FMA ISAs */
-    //assert(CPUUtil::GetSIMDSupport());
+    /* make sure the runtime system supports AVX and FMA ISAs */
+    assert(CPUUtil::GetSIMDSupport());
 
-    //const char* inputMtxAFile = argv[1];
-    //const char* inputMtxBFile = argv[2];
-    //const char* outMtxABFile = argv[3];
+    const char* inputMtxAFile = argv[1];
+    const char* inputMtxBFile = argv[2];
+    const char* outMtxABFile = argv[3];
 
-    const char* inputMtxAFile = "matrixAx.bin";
-    const char* inputMtxBFile = "matrixBx.bin";
-    const char* outMtxABFile = "matrixAB-out.bin";
+    //const char* inputMtxAFile = "matrixAx.bin";
+    //const char* inputMtxBFile = "matrixBx.bin";
+    //const char* outMtxABFile = "matrixAB-out.bin";
 
     const Mat inputMtxA = LoadMat(inputMtxAFile);
     const Mat inputMtxB = LoadMat(inputMtxBFile);
