@@ -204,7 +204,7 @@ int _cdecl main(int argc, char *argv[])
         /* NxM, MxK */
         const int N = atoi(argv[1]);
         const int M = atoi(argv[2]);
-        const int K = atoi(argv[2]);
+        const int K = atoi(argv[3]);
         assert(N > 0 && M > 0);
         a.width = M;
         a.height = N;

@@ -284,3 +284,6 @@ __pycache__/
 /MatrixMult/My Inspector Results - MatrixMult
 /MatrixMult/matrixB1000.bin
 /MatrixMult/matrixA1000.bin
+/MatrixMult/matrixBx.bin
+/MatrixMult/matrixAx.bin
+/MatrixMult/matrixABx.bin

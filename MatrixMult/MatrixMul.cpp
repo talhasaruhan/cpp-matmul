@@ -362,6 +362,7 @@ __declspec(noalias) void MMHelper_MultAnyBlocks(float* __restrict const matData,
                                                 const int blockY,
                                                 const MMBlockInfo& mmBlockInfo)
 {
+    return;
     /* if no work to be done, exit */
     if (blockX <= 0 || blockY <= 0)
         return;
@@ -433,38 +434,44 @@ __declspec(noalias) void MMHelper_Mult1x1Blocks(float* __restrict const matData,
                                                 const unsigned row)
 {
     /* scalar accumulator */
-    __declspec(align(32)) float fps;
+    __declspec(align(32)) float fps[8];
+    __declspec(align(32)) float accumulate;
 
     const unsigned matAoffset = row * matA.rowSpan;
     const unsigned matBToffset = col * matBT.rowSpan;
 
     /* SIMD accumulators */
-    __m256 a11, a12, a21, a22, a31, a32, b1, b2;
+    __m256 a1, a2, b1, b2;
     __m256 c1 = _mm256_setzero_ps();
     __m256 c2 = _mm256_setzero_ps();
 
     /* handle 1 x 1 rows, 2x8f vectors at a time
-    * <--------- A.w -------->
-    * [---- [a11] [a12] ---- ]
-    * [---- [b1 ] [ b2] ---- ]
+    * <-------- A.w ------->
+    * [---- [a1] [a2] ---- ]
+    * [---- [b1] [b2] ---- ]
     */
 
     for (int pos = 0; pos < matA.width; pos += 16) {
-        a11 = _mm256_load_ps(&matA.mat[matAoffset + pos]);
-        a12 = _mm256_load_ps(&matA.mat[matAoffset + pos + 8]);
+        a1 = _mm256_load_ps(&matA.mat[matAoffset + pos]);
+        a2 = _mm256_load_ps(&matA.mat[matAoffset + pos + 8]);
 
         b1 = _mm256_load_ps(&matBT.mat[matBToffset + pos]);
         b2 = _mm256_load_ps(&matBT.mat[matBToffset + pos + 8]);
 
-        c1 = _mm256_fmadd_ps(a11, b1, c1);
-        c2 = _mm256_fmadd_ps(a12, b2, c2);
+        c1 = _mm256_fmadd_ps(a1, b1, c1);
+        c2 = _mm256_fmadd_ps(a2, b2, c2);
     }
 
     c1 = _mm256_add_ps(c1, c2);
-    _mm256_store_ps(&fps, c1);
+    _mm256_store_ps(&fps[0], c1);
+
+    accumulate = 0;
+    for (int i = 0; i < 8; ++i) {
+        accumulate += fps[i];
+    }
 
     /* store */
-    matData[row * rowSpan + col] = fps;
+    matData[row * rowSpan + col] = accumulate;
 }
 
 /* Calculates a 1x3 block on the matrix C, (t,l,b,r)->(row,col,row+1,col+3) */
@@ -992,7 +999,7 @@ __declspec(noalias) const Mat MTMatMul(const Mat& matA, const Mat& matB)
     tp.Add({HWLocalThreadPool::WrapFunc(MMHelper_MultAnyBlocks, matData, matB.rowSpan,
                                         matA, matBT, colC, rowC, matB.width - colC,
                                         matA.height - rowC, mmBlockInfo),
-            []() {}});
+        []() {}});
 
     /* -- commands issued -- */
 
@@ -1033,8 +1040,8 @@ int __cdecl main(int argc, char* argv[])
     const char* inputMtxBFile = argv[2];
     const char* outMtxABFile = argv[3];
 
-    //const char* inputMtxAFile = "matrixA1000.bin";
-    //const char* inputMtxBFile = "matrixB1000.bin";
+    //const char* inputMtxAFile = "matrixAx.bin";
+    //const char* inputMtxBFile = "matrixBx.bin";
     //const char* outMtxABFile = "matrixAB-out.bin";
 
     const Mat inputMtxA = LoadMat(inputMtxAFile);
