@@ -11,6 +11,7 @@
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <numeric>
 #include <xmmintrin.h>
 #include <emmintrin.h>
 #include <immintrin.h>
@@ -362,7 +363,6 @@ __declspec(noalias) void MMHelper_MultAnyBlocks(float* __restrict const matData,
                                                 const int blockY,
                                                 const MMBlockInfo& mmBlockInfo)
 {
-    return;
     /* if no work to be done, exit */
     if (blockX <= 0 || blockY <= 0)
         return;
@@ -891,20 +891,21 @@ __declspec(noalias) const Mat MTMatMul(const Mat& matA, const Mat& matB)
     /* decide the block sizes for the given matrix and CPU */
     const float invN = 1.0 / matA.rowSpan;
 
-    int L3BlockX = min(
-        min(((int)(invN * (float)((L3Size / 2) / sizeof(float))) / (60)) * (60), 240),
-        matA.width / 60 * 60
-    );
+    int QL2 = invN * L2Size / sizeof(float);
+    int QL3 = invN * L3Size / sizeof(float);
+    int k = min(max(QL2 / 6, 1), 10);
+    int m = min(max(QL2 / 8, 1), 10);
+    printf("%d %d %d %d\n", QL2, QL3, k, m);
+    int L2BlockX = 3 * k;
+    int L2BlockY = 4 * m;
+    int lcmMN = std::lcm(k, m);
+    int L3BlockX = min(max(QL3 / 120 / lcmMN * lcmMN * 60, 12*L2BlockX), 360);
     int L3BlockY = L3BlockX;
-    int L2BlockX =
-      max(min((int)((invN * (float)((L2Size / 2) / sizeof(float))) / 3) * 3, 30), 3);
-    int L2BlockY =
-      max(min((int)((invN * (float)((L2Size / 2) / sizeof(float))) / 4) * 4, 40), 4);
-    int issuedBlockSzX = L3BlockX / 4 / L2BlockX * L2BlockX;
-    int issuedBlockSzY = L3BlockY / 3 / L2BlockY * L2BlockY;
+    int issuedBlockSzX = L3BlockX / 4;
+    int issuedBlockSzY = L3BlockY / 3;
 
-    /*printf("%d %d %d %d %d %d\n", L2BlockX, L2BlockY, issuedBlockSzX, issuedBlockSzY,
-           L3BlockX, L3BlockY);*/
+    printf("%d %d\n%d %d %d %d %d %d\n", matC.height, matC.width, L2BlockX, L2BlockY, issuedBlockSzX, issuedBlockSzY,
+           L3BlockX, L3BlockY);
 
     MMBlockInfo mmBlockInfo{L3BlockX, L3BlockY,       L2BlockX,
                             L2BlockY, issuedBlockSzX, issuedBlockSzY};
@@ -1028,21 +1029,21 @@ const Mat MatMul(const Mat& matA, const Mat& matB)
 
 int __cdecl main(int argc, char* argv[])
 {
-    if (argc < 4) {
-        std::cout << "No args\n";
-        return 0;
-    }
+    //if (argc < 4) {
+    //    std::cout << "No args\n";
+    //    return 0;
+    //}
 
-    /* make sure the runtime system supports AVX and FMA ISAs */
-    assert(CPUUtil::GetSIMDSupport());
+    ///* make sure the runtime system supports AVX and FMA ISAs */
+    //assert(CPUUtil::GetSIMDSupport());
 
-    const char* inputMtxAFile = argv[1];
-    const char* inputMtxBFile = argv[2];
-    const char* outMtxABFile = argv[3];
+    //const char* inputMtxAFile = argv[1];
+    //const char* inputMtxBFile = argv[2];
+    //const char* outMtxABFile = argv[3];
 
-    //const char* inputMtxAFile = "matrixAx.bin";
-    //const char* inputMtxBFile = "matrixBx.bin";
-    //const char* outMtxABFile = "matrixAB-out.bin";
+    const char* inputMtxAFile = "matrixAx.bin";
+    const char* inputMtxBFile = "matrixBx.bin";
+    const char* outMtxABFile = "matrixAB-out.bin";
 
     const Mat inputMtxA = LoadMat(inputMtxAFile);
     const Mat inputMtxB = LoadMat(inputMtxBFile);
