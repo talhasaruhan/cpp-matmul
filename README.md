@@ -9,12 +9,13 @@ matrices, and relevant utilities. My prime focuses were:
 
   - Cache locality, memory access patterns.
 
-  - SIMD, ways to help compiler generate vectorized code without using
-    intrinsics
+  - SIMD, hand optimized AVX/FMA intrinsics.
+  
+  - Software prefetching to maximize pipeline utilization.
 
-  - Cache friendly multithreading
+  - Cache friendly multithreading.
 
-I didn’t implement the Strassen’s algorithm, but may do so later on.
+I didn’t implement the Strassen’s algorithm, this code runs on O(N^3).
 
 # How to run
 
@@ -34,11 +35,13 @@ for /l %x in (1, 1, 100) do echo %x && (MatrixGenerator.exe && printf "Generated
 
 # Benchmarks - OLD will be updated soon
 
+***Pre-update note:*** Current implementation runs faster than Eigen (MKL+TBB) for all test cases tried up to N=15K! Intel Advisor and VTune clearly shows that MKL kernel is used and no abnormal overheads are present.
+
 On my machine (6 core i7-8700K), I’ve compared my implementation against:
 * Multithreaded python-numpy which uses C/C++ backend and Intel MKL BLAS
 library. 
 * Eigen library (with all the compiler optimizations turned on)
-  * I've tested both Eigen's own implementations and Eigen with MKL+TBB backend.
+    * I've tested both Eigen's own implementation and Eigen compiled with MKL+TBB backend, runtime analysis shows that the benchmark indeed uses MKL kernel for matrix multiplication and Eigen doesn't introduce any overheads.
 
 ## Comparison
 
@@ -108,7 +111,7 @@ on the same core and share the same L1 and L2 cache.
 
 # What's next?
 * ~~Still a factor of 2 to achieve MKL performance.~~ Achieved and surpassed Eigen(MKL+TBB) performance, tested for 0<N<15K
-* Right now, when the prefetch switches are enabled, instruction retirement rate is about 88%, and the program is neither front-end nor back-end bound. When the switches are disabled, the retirement rate drops to about 50%, and the program is heavily memory bound. However, on my current system (i7 8700K), binary without prefetching actually computes the output significantly faster (15%). Try this on other hardware with different cache performances and varying matrix sizes.
+* Right now, when the prefetch switches are enabled, instruction retirement rate is about 88%, and the program is neither front-end nor back-end bound, it has excellent pipeline utilization. When the switches are disabled, the retirement rate drops to about 50%, and the program is heavily memory bound, pipelines are heavily stalled due to these bounds. However, on my current system (i7 8700K), binary without prefetching actually computes the output significantly faster (15%). I think this behaviour will heavily rely on the specific CPU, its cache size and performance. Try this on other hardware with different cache performances and varying matrix sizes.
 * Wrap the functionality in a replicable and distributable framework that's easy to use.
 
 # Changelog
