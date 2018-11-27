@@ -119,8 +119,8 @@ on the same core and share the same L1 and L2 cache.
 
 ### 27/11/2018
 * Cleaned up the code. Split some behaviours into seperate functions.
-* Implemented best block size parameter deduction based on the runtime sytstem.
-* Tuned software prefetching, now do multiple smaller prefetches in between arithmetic operations and with a stride.
+* Implemented runtime detection for best block size parameters for the runtime system.
+* Tuned software prefetching, now we do multiple smaller prefetches in between arithmetic operations and with a stride between prefetches.
 * More arithmetically dense inner loop. Instead of 3x3 blocks, do 4x3 blocks (3b + 12c + 1 temporary a == 16 registers used), 7 loads, 12 arithmetic operations.
 * Renamed QueryHWCores namespace to CPUUtils and extended it to support querying cache sizes, HTT/AVX/FMA support etc. using \_\_cpuid.
 
