@@ -1,4 +1,4 @@
-# Project
+# Multithreaded, Lightning fast Matrix-Matrix Multiplication
 
 [See CHANGELOG](#changelog)
 
@@ -18,9 +18,13 @@ I didn’t implement the Strassen’s algorithm, but may do so later on.
 
 # How to run
 
-Note: The code is currently Win32 only, though can be ported with some effort. 
+**Requirements:**
+* Windows platform
+* 64-bit Intel CPU with AVX / FMA support
 
-Build the solution, then navigate to *x64\\Release\\* and run this command or call “run.bat”. If
+This program relies on Intel for cpuid responses and intrinsics and Win32 API for logical-physical processor mapping and setting thread affinity.
+
+Build the solution (see build options), then navigate to *x64\\Release\\* and run this command or call “run.bat”. If
 you don’t have “tee” command, just delete the last part or install
 GnuWin32 CoreUtils.
 
