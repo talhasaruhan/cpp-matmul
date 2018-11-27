@@ -23,7 +23,7 @@ I didn’t implement the Strassen’s algorithm, this code runs on O(N^3).
 * Windows platform
 * 64-bit Intel CPU with AVX / FMA support
 
-This program relies on Intel for cpuid responses and intrinsics and Win32 API for logical-physical processor mapping and setting thread affinity.
+This program relies on Intel specifix cpuid responses and intrinsics and Win32 API for logical-physical processor mapping and setting thread affinity.
 
 Build the solution (see build options), then navigate to *x64\\Release\\* and run this command or call “run.bat”. If
 you don’t have “tee” command, just delete the last part or install
