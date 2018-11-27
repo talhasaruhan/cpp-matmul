@@ -35,7 +35,7 @@ for /l %x in (1, 1, 100) do echo %x && (MatrixGenerator.exe && printf "Generated
 
 # Benchmarks - OLD will be updated soon
 
-***Pre-update note:*** Current implementation runs faster than Eigen (MKL+TBB) for all test cases tried up to N=15K! Intel Advisor and VTune clearly shows that MKL kernel is used and no abnormal overheads are present.
+***Pre-update note:*** Current implementation runs faster than Eigen (MKL+TBB) for all test cases (tested up to N=15K)! Intel Advisor and VTune clearly shows that MKL kernel *avx2_dgemm_kernel_0* is used and no abnormal overheads are present.
 
 On my machine (6 core i7-8700K), I’ve compared my implementation against:
 * Multithreaded python-numpy which uses C/C++ backend and Intel MKL BLAS
