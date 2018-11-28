@@ -23,8 +23,11 @@ I didn’t implement the Strassen’s algorithm, this code runs on O(N^3).
 * Windows platform
 * 64-bit Intel CPU with AVX / FMA support
 
-This program relies on Intel specifix cpuid responses and intrinsics and Win32 API for logical-physical processor mapping and setting thread affinity.
+Currently, if you're looking to use this code, just copy and include CPUUtils.\* ThreadPool.h and copy the contents of MatrixMul.cpp except main() into a namespace, the code should be ready to compile as a header only library. Will tidy up the code into a proper library soon.
 
+Note that this program relies on Intel specifix cpuid responses and intrinsics and Win32 API for logical-physical processor mapping and setting thread affinity.
+
+Running the example code:  
 Build the solution (see build options), then navigate to *x64\\Release\\* and run this command or call “run.bat”. If
 you don’t have “tee” command, just delete the last part or install
 GnuWin32 CoreUtils.
@@ -90,7 +93,7 @@ on the same core and share the same L1 and L2 cache.
     compiled with C++ 11)
 
 # What's next?
-* ~~Still a factor of 2 to achieve MKL performance.~~ Achieved and surpassed Eigen(MKL+TBB) performance, tested for 0<N<15K
+* ~~Still a factor of 2 to achieve MKL performance.~~ Achieved and surpassed Eigen(MKL+TBB) performance for most test cases N<15K. Test and optimize for larger matrices.
 * Right now, when the prefetch switches are enabled, instruction retirement rate is about 88%, and the program is neither front-end nor back-end bound, it has excellent pipeline utilization. When the switches are disabled, the retirement rate drops to about 50%, and the program is heavily memory bound, pipelines are heavily stalled due to these bounds. However, on my current system (i7 8700K), binary without prefetching actually computes the output significantly faster (15%). I think this behaviour will heavily rely on the specific CPU, its cache size and performance. Try this on other hardware with different cache performances and varying matrix sizes.
 * Wrap the functionality in a replicable and distributable framework that's easy to use.
 
